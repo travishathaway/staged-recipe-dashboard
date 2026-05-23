@@ -1,0 +1,64 @@
+[project]
+name = "staged-recipe-dashboard"
+version = "0.1.0"
+description = "Dashboard for conda-forge staged-recipe reviewers"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+# ── Shared base ────────────────────────────────────────────────────────────────
+[dependencies]
+python = ">=3.11"
+
+# ── Worker feature ─────────────────────────────────────────────────────────────
+[feature.worker.dependencies]
+psycopg2 = ">=2.9"
+httpx = ">=0.27"
+apscheduler = ">=3.10"
+
+[feature.worker.pypi-dependencies]
+perceval = ">=0.20"
+
+# ── Backend feature ────────────────────────────────────────────────────────────
+[feature.backend.dependencies]
+fastapi = ">=0.110"
+uvicorn = ">=0.29"
+sqlalchemy = ">=2.0"
+alembic = ">=1.13"
+psycopg2 = ">=2.9"
+typer = ">=0.12"
+platformdirs = ">=4.2"
+
+# ── Database feature (bundled PostgreSQL server) ───────────────────────────────
+[feature.db.dependencies]
+postgresql = ">=16"
+
+# ── Frontend feature (Node.js toolchain) ───────────────────────────────────────
+[feature.frontend.dependencies]
+nodejs = ">=20"
+
+# ── Dev feature ────────────────────────────────────────────────────────────────
+[feature.dev.dependencies]
+pytest = ">=8"
+ruff = ">=0.4"
+mypy = ">=1.10"
+
+# ── App feature (local editable install, Python envs only) ────────────────────
+[feature.app.pypi-dependencies]
+staged-recipe-dashboard = { path = ".", editable = true }
+
+# ── Environments ───────────────────────────────────────────────────────────────
+[environments]
+default  = { features = ["worker", "backend", "db", "app"], solve-group = "default" }
+dev      = { features = ["worker", "backend", "db", "dev", "app"], solve-group = "default" }
+frontend = { features = ["frontend"] }
+
+# ── Tasks ──────────────────────────────────────────────────────────────────────
+[tasks]
+init     = "srdb init"
+sync     = "srdb sync"
+serve    = "srdb serve"
+worker   = "srdb worker"
+start    = "srdb start"
+
+[feature.frontend.tasks]
+build-ui = { cmd = "npm run build", cwd = "frontend" }

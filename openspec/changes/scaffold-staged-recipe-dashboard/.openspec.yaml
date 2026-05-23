@@ -1,0 +1,7 @@
+name: scaffold-staged-recipe-dashboard
+status: in-progress
+created: 2026-05-23
+artifacts:
+  - proposal.md
+  - design.md
+  - tasks.md
