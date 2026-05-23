@@ -34,7 +34,7 @@ class DatabaseConfig:
 
 @dataclass
 class WorkerConfig:
-    sync_interval_minutes: int = 15
+    sync_interval_minutes: int = 1
     events_interval_minutes: int = 60
     github_tokens: list[str] = field(default_factory=list)
 
@@ -56,16 +56,37 @@ class ServerConfig:
 
 
 @dataclass
+class LoggingConfig:
+    # Path to a log file. When unset, logs go to stderr.
+    file: str | None = None
+    level: str = "INFO"
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LoggingConfig":
+        valid = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**valid)
+
+
+@dataclass
 class AppConfig:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
 def load_config(path: Path | None = None) -> AppConfig:
-    """Load config from TOML file; fall back to defaults if the file doesn't exist."""
-    config_path = path or CONFIG_DIR / "config.toml"
-    if not config_path.exists():
+    """Load config from TOML file; fall back to defaults if no file is found.
+
+    Search order:
+      1. Explicit path argument
+      2. ./config.toml  (current working directory)
+      3. <platform config dir>/config.toml
+    """
+    candidates = [path] if path else [Path("config.toml"), CONFIG_DIR / "config.toml"]
+    config_path = next((p for p in candidates if p and p.exists()), None)
+
+    if config_path is None:
         return AppConfig()
 
     with open(config_path, "rb") as f:
@@ -75,4 +96,5 @@ def load_config(path: Path | None = None) -> AppConfig:
         database=DatabaseConfig.from_dict(raw.get("database", {})),
         worker=WorkerConfig.from_dict(raw.get("worker", {})),
         server=ServerConfig.from_dict(raw.get("server", {})),
+        logging=LoggingConfig.from_dict(raw.get("logging", {})),
     )

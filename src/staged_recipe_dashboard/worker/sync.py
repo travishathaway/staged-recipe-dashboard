@@ -2,18 +2,34 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 from perceval.backends.core.github import GitHub
 
-from staged_recipe_dashboard.config import AppConfig
+from staged_recipe_dashboard.config import AppConfig, RUNTIME_DIR
 
 OWNER = "conda-forge"
 REPO = "staged-recipes"
 BATCH_SIZE = 200
+# Overlap subtracted from last-sync time to catch any PRs whose updated_at
+# was slightly behind the clock when the previous sync ran.
+OVERLAP_MINUTES = 15
 
 logger = logging.getLogger(__name__)
+
+_STATE_FILE = RUNTIME_DIR / "last_sync.txt"
+
+
+def _read_last_sync() -> datetime | None:
+    if _STATE_FILE.exists():
+        return datetime.fromisoformat(_STATE_FILE.read_text().strip())
+    return None
+
+
+def _write_last_sync(dt: datetime) -> None:
+    _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _STATE_FILE.write_text(dt.isoformat())
 
 UPSERT_PR_SQL = """
     INSERT INTO pull_requests
@@ -71,7 +87,30 @@ def _sync_batch(cur, batch: list[tuple]) -> None:
 
 
 def run_once(cfg: AppConfig, from_date: datetime | None = None) -> None:
-    """Fetch all PRs from GitHub (or since from_date) and upsert into postgres."""
+    """Fetch PRs from GitHub and upsert into postgres.
+
+    from_date behaviour:
+      - Explicitly provided (e.g. via --from-date): used as-is.
+      - Not provided and last_sync.txt exists: uses last sync time minus
+        OVERLAP_MINUTES to avoid missing PRs at the boundary.
+      - Not provided and no state file: full sync from the beginning of time.
+
+    Writes the sync start time to last_sync.txt on success so the next
+    incremental run knows where to start.
+    """
+    # Resolve from_date from state file if not explicitly given.
+    if from_date is None:
+        last = _read_last_sync()
+        if last is not None:
+            from_date = last - timedelta(minutes=OVERLAP_MINUTES)
+            logger.info(
+                "Incremental sync: using last sync time minus %dm overlap → %s",
+                OVERLAP_MINUTES, from_date.isoformat(),
+            )
+        else:
+            logger.info("No previous sync found; performing full sync.")
+
+    sync_start = datetime.now(timezone.utc)
     logger.info("PR sync starting: %s/%s from_date=%s", OWNER, REPO, from_date or "beginning")
 
     if not cfg.worker.github_tokens:
@@ -113,6 +152,7 @@ def run_once(cfg: AppConfig, from_date: datetime | None = None) -> None:
             _sync_batch(cur, batch)
             conn.commit()
 
+        _write_last_sync(sync_start)
         logger.info("PR sync complete. %d PRs synced (scanned %d items).", total, seen)
     finally:
         cur.close()

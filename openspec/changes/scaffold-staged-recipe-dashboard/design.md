@@ -49,51 +49,59 @@ staged-recipe-dashboard/
 ## Pixi Environments
 
 ```toml
-# pixi.toml (sketch — not final syntax)
-
-[project]
+[workspace]
 name = "staged-recipe-dashboard"
 channels = ["conda-forge"]
-platforms = ["linux-64", "osx-arm64", "osx-64"]
+platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
+
+[dependencies]
+python = ">=3.11"
 
 [feature.worker.dependencies]
-python = ">=3.11"
-perceval = "*"          # from conda-forge
-psycopg2 = "*"
-httpx = "*"
-apscheduler = ">=3"
+psycopg2 = ">=2.9"
+httpx = ">=0.27"
+apscheduler = ">=3.10"
+
+[feature.worker.pypi-dependencies]
+perceval = ">=0.20"          # not on conda-forge
 
 [feature.backend.dependencies]
-python = ">=3.11"
-fastapi = "*"
-uvicorn = "*"
-sqlalchemy = ">=2"
-alembic = "*"
-psycopg2 = "*"
+fastapi = ">=0.110"
+uvicorn = ">=0.29"
+sqlalchemy = ">=2.0"
+alembic = ">=1.13"
+psycopg2 = ">=2.9"
+typer = ">=0.12"
+platformdirs = ">=4.2"
+
+[feature.db.dependencies]
+postgresql = ">=16"          # server binaries: initdb, pg_ctl, psql, createdb
 
 [feature.frontend.dependencies]
 nodejs = ">=20"
 
 [feature.dev.dependencies]
-pytest = "*"
-ruff = "*"
-mypy = "*"
+pytest = ">=8"
+ruff = ">=0.4"
+mypy = ">=1.10"
 
-[feature.db.dependencies]
-postgresql = "*"        # server binaries: initdb, pg_ctl, psql
+[feature.app.pypi-dependencies]
+staged-recipe-dashboard = { path = ".", editable = true }
 
 [environments]
-default  = ["worker", "backend", "db"]
-dev      = ["worker", "backend", "db", "dev"]
-frontend = ["frontend"]
+default  = { features = ["worker", "backend", "db", "app"], solve-group = "default" }
+dev      = { features = ["worker", "backend", "db", "dev", "app"], solve-group = "default" }
+frontend = { features = ["frontend"] }
 
 [tasks]
-# Dev convenience tasks
-sync     = "srdb sync"
-serve    = "srdb serve"
-worker   = "srdb worker"
-build-ui = "srdb build-ui"
-init     = "srdb init"
+init    = "srdb init"
+sync    = "srdb sync"
+serve   = "srdb serve"
+worker  = "srdb worker"
+start   = "srdb start"
+
+[feature.frontend.tasks]
+build-ui = { cmd = "npm run build", cwd = "frontend" }
 ```
 
 ## CLI Design (Typer)
@@ -101,23 +109,25 @@ init     = "srdb init"
 Entry point: `srdb` (installed via pyproject.toml `[project.scripts]`)
 
 ```
-srdb init            # initdb + create DB + run Alembic migrations
-srdb start           # start postgres + worker + server (VPS entrypoint)
-srdb stop            # graceful shutdown of all three
-srdb status          # show process status
+srdb init                          # db start (with auto-initdb) + alembic upgrade head
+srdb start                         # postgres + worker + server (VPS entrypoint)
+srdb stop                          # graceful shutdown of all three
+srdb status                        # show process status
 
-srdb sync            # one-shot GitHub → postgres sync (postgres must be running)
-srdb worker          # start APScheduler background worker
-srdb serve           # start uvicorn
+srdb sync [--from-date YYYY-MM-DD] # one-shot sync; uses last_sync.txt if no date given
+srdb worker                        # start APScheduler background worker
+srdb serve                         # start uvicorn
 
-srdb db start        # start just postgres (pg_ctl start)
-srdb db stop         # stop just postgres
-srdb db shell        # open psql
+srdb db start                      # initdb (if needed) + pg_ctl start + createdb (if needed)
+srdb db stop                       # pg_ctl stop
+srdb db shell                      # open psql
 
-srdb build-ui        # npm run build --prefix frontend → bundle into static/
+srdb build-ui                      # npm run build → copy dist/ to package static/
 ```
 
-`srdb start` is the single VPS deployment command. It starts postgres (via `pg_ctl`), waits for it to be ready, then launches the worker and uvicorn as subprocesses under signal-aware Python supervision.
+`srdb db start` is self-contained: it runs `initdb` if the data directory doesn't exist, patches `postgresql.conf` to use the runtime dir for the Unix socket, starts postgres, then creates the application database if it doesn't exist. All other commands that need postgres running call `db_start` internally.
+
+`srdb start` is the single VPS deployment command. It ensures postgres is running, then launches the worker and uvicorn as signal-aware subprocesses.
 
 ## Database Schema
 
@@ -128,6 +138,7 @@ CREATE TABLE pull_requests (
     state       TEXT        NOT NULL,           -- 'open' | 'closed'
     author      TEXT,
     title       TEXT,
+    html_url    TEXT,                           -- GitHub PR URL (extracted for fast access)
     created_at  TIMESTAMPTZ,
     updated_at  TIMESTAMPTZ,
     closed_at   TIMESTAMPTZ,
@@ -160,13 +171,27 @@ CREATE INDEX idx_history_label ON pr_label_history (label_name);
 
 ## Sync Design
 
-### Phase 1 — PR sync (every 15 min via APScheduler)
+### Phase 1 — PR sync (every 1 min via APScheduler)
 
-Uses perceval `GitHub` backend (same as `main.py`) but targeting postgres:
+Uses perceval `GitHub` backend (same as `main.py`) but targeting postgres.
 
+**Incremental sync with state tracking:**
+
+`run_once` reads `RUNTIME_DIR/last_sync.txt` to determine `from_date`:
+
+- **No state file** (first run): full sync from the beginning of time. Writes `last_sync.txt` on success.
+- **State file exists**: uses `last_sync_time - 15 min` as `from_date` (overlap buffer to catch PRs whose `updated_at` lagged behind the previous sync's clock).
+- **`--from-date` flag** (manual override via CLI): bypasses state file, uses the given date. Still writes `last_sync.txt` on success.
+
+For each PR processed:
 1. Upsert into `pull_requests`
-2. Delete then re-insert `pr_labels` for each PR (labels are the live state of `data['labels']`)
-3. On incremental syncs, only process PRs updated since last run (perceval `from_date`)
+2. Delete then re-insert `pr_labels` (reflects current label state from `data['labels']`)
+
+**Production workflow:**
+```bash
+srdb sync          # full sync (first run, takes several minutes)
+srdb worker        # scheduler takes over; each tick is a fast incremental sync
+```
 
 ### Phase 2 — Label history sync (every 60 min)
 
@@ -221,14 +246,48 @@ GET /api/prs/{number}
 
 Postgres is a conda dependency (`postgresql` from conda-forge). The data directory defaults to `platformdirs.user_data_dir("staged-recipe-dashboard") / "pgdata"` and is configurable via `config.toml`.
 
-`srdb init` runs:
-1. `initdb -D <data_dir>` (skip if already initialized)
-2. Writes a minimal `postgresql.conf` patch (Unix socket dir, port)
-3. `pg_ctl start -D <data_dir>`
-4. `createdb staged_recipe_dashboard`
-5. `alembic upgrade head`
+`srdb db start` is the self-contained postgres bootstrap command:
+1. `initdb -D <data_dir> --auth=trust` — skipped if `PG_VERSION` already exists
+2. Appends `unix_socket_directories` and `port` to `postgresql.conf` — only on first init
+3. `pg_ctl start -D <data_dir> -l <runtime_dir>/postgres.log`
+4. Creates the application database via `createdb` — skipped if it already exists
 
-`srdb start` ensures postgres is running before launching Python processes. All connections use the Unix socket (no password, `trust` auth for the local user).
+`srdb init` calls `db_start` then runs `alembic upgrade head`.
+
+`srdb start` calls `db_start` before launching Python subprocesses. All connections use the Unix socket (`trust` auth for the local user — no password needed).
+
+Logging: postgres logs to `RUNTIME_DIR/postgres.log`. Python processes (worker, server) log to stderr by default, or to a file configured via `[logging] file` in `config.toml`.
+
+## Configuration
+
+Config is loaded from `config.toml`. Search order:
+1. `./config.toml` — current working directory (useful for dev)
+2. `<platform config dir>/staged-recipe-dashboard/config.toml`
+
+A `config.toml.example` is included at the project root documenting all keys.
+
+```toml
+[database]
+data_dir   = "~/.local/share/staged-recipe-dashboard/pgdata"
+socket_dir = "/run/user/1000/staged-recipe-dashboard"
+port       = 5432
+name       = "staged_recipe_dashboard"
+
+[worker]
+github_tokens          = ["ghp_..."]
+sync_interval_minutes  = 1    # incremental syncs are fast
+events_interval_minutes = 60
+
+[server]
+host = "0.0.0.0"
+port = 8000
+
+[logging]
+# file = "/var/log/staged-recipe-dashboard/app.log"  # omit to use stderr
+level = "INFO"
+```
+
+Logging is configured once at startup by `_configure_logging(cfg)` in `cli.py`, called by `sync`, `worker`, `serve`, and `start`. When `logging.file` is set, a `FileHandler` is created (parent directories are created if needed); otherwise a `StreamHandler` to stderr is used. Uvicorn's log config is disabled so its records flow through the same handler.
 
 ## Conda Package
 

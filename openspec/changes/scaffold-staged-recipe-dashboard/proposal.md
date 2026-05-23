@@ -33,6 +33,8 @@ The existing `main.py` proves the data collection approach works but uses SQLite
 ## Constraints
 
 - Dependency manager: **pixi** (conda-forge channel), with separate environments for worker, backend, and frontend.
-- PostgreSQL is bundled as a conda dependency (not an external service), managed by the CLI.
+- PostgreSQL is bundled as a conda dependency (not an external service), managed by the CLI. `srdb db start` handles full bootstrap (initdb → start → createdb) automatically.
 - Package must be publishable to conda-forge as a single conda package.
 - "Longest waiting" is defined by when the `review-requested` label was first applied (from GitHub Events API), not PR `created_at`.
+- Sync strategy: one full sync on first run (`srdb sync`), then incremental every minute via the scheduler. State tracked in `last_sync.txt` with a 15-minute overlap buffer.
+- A `config.toml.example` is provided at the project root documenting all configuration options.

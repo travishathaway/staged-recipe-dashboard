@@ -1,0 +1,64 @@
+# staged-recipe-dashboard configuration
+#
+# Copy this file to:
+#   Linux:  ~/.config/staged-recipe-dashboard/config.toml
+#   macOS:  ~/Library/Application Support/staged-recipe-dashboard/config.toml
+#
+# All keys are optional — omitted keys use the defaults shown below.
+
+[database]
+# Directory where PostgreSQL stores its data files (created by initdb).
+# Default: platform data dir / pgdata
+# data_dir = "~/.local/share/staged-recipe-dashboard/pgdata"
+
+# Directory for the PostgreSQL Unix socket file (.s.PGSQL.5432).
+# Must match unix_socket_directories in postgresql.conf (set automatically by srdb init).
+# Default: platform runtime dir
+# socket_dir = "/run/user/1000/staged-recipe-dashboard"
+
+# TCP port postgres listens on (only used if connecting via TCP instead of socket).
+# Default: 5432
+# port = 5432
+
+# Name of the application database.
+# Default: staged_recipe_dashboard
+# name = "staged_recipe_dashboard"
+
+[worker]
+# GitHub personal access token(s). Pass multiple to rotate when rate limits are hit.
+# Required — the worker will not run without at least one token.
+# Generate at: https://github.com/settings/tokens (read:org + public_repo scopes)
+github_tokens = [
+    "ghp_YOUR_TOKEN_HERE",
+    # "ghp_SECOND_TOKEN_FOR_EXTENDED_RATE_LIMITS",
+]
+
+# How often to sync PR data from GitHub (via perceval).
+# Incremental syncs are fast (seconds), so 1 minute is a reasonable default.
+# The first run after `srdb sync` will always be incremental.
+# Default: 1
+# sync_interval_minutes = 1
+
+# How often to backfill label timestamps from the GitHub Events API.
+# Only runs for open PRs missing a review-requested history entry.
+# Default: 60
+# events_interval_minutes = 60
+
+[logging]
+# Path to a log file for the worker and server processes.
+# When unset, logs are written to stderr.
+# file = "/var/log/staged-recipe-dashboard/app.log"
+
+# Log level: DEBUG, INFO, WARNING, ERROR
+# Default: INFO
+# level = "INFO"
+
+[server]
+# Address the API server binds to.
+# Use "0.0.0.0" to accept connections from any interface (needed for VPS deployments).
+# Default: 0.0.0.0
+# host = "0.0.0.0"
+
+# Port the FastAPI/uvicorn server listens on.
+# Default: 8000
+# port = 8000

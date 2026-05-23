@@ -1,17 +1,37 @@
 """srdb — staged-recipe-dashboard management CLI."""
 
+import logging
 import os
 import shutil
 import signal
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import typer
 
-from staged_recipe_dashboard.config import RUNTIME_DIR, load_config
+from staged_recipe_dashboard.config import AppConfig, RUNTIME_DIR, load_config
 
 app = typer.Typer(name="srdb", help="staged-recipe-dashboard management CLI", no_args_is_help=True)
+
+
+def _configure_logging(cfg: AppConfig) -> None:
+    """Set up root logger from config: file if configured, otherwise stderr."""
+    log_cfg = cfg.logging
+    level = getattr(logging, log_cfg.level.upper(), logging.INFO)
+    fmt = "[%(asctime)s] %(levelname)s %(name)s: %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+
+    if log_cfg.file:
+        log_path = Path(log_cfg.file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handler: logging.Handler = logging.FileHandler(log_path)
+    else:
+        handler = logging.StreamHandler()
+
+    logging.basicConfig(level=level, format=fmt, datefmt=datefmt, handlers=[handler])
 db_app = typer.Typer(help="Manage the bundled PostgreSQL server", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 
@@ -64,16 +84,58 @@ def _process_alive(pid: int) -> bool:
 # ── db subcommands ────────────────────────────────────────────────────────────
 
 
+def _ensure_pg_initialized() -> None:
+    """Run initdb and configure postgresql.conf if the data directory is missing or empty."""
+    cfg = _cfg()
+    data_dir = Path(cfg.database.data_dir)
+
+    if (data_dir / "PG_VERSION").exists():
+        return  # already initialized
+
+    typer.echo(f"Initializing PostgreSQL data directory: {data_dir}")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["initdb", "-D", str(data_dir), "--auth=trust"], check=True)
+
+    socket_dir = Path(cfg.database.socket_dir)
+    socket_dir.mkdir(parents=True, exist_ok=True)
+    with open(data_dir / "postgresql.conf", "a") as f:
+        f.write(f"\nunix_socket_directories = '{socket_dir}'\n")
+        f.write(f"port = {cfg.database.port}\n")
+    typer.echo("PostgreSQL data directory initialized.")
+
+
 @db_app.command("start")
 def db_start():
-    """Start the bundled PostgreSQL server."""
+    """Start the bundled PostgreSQL server, initializing it first if needed."""
+    _ensure_pg_initialized()
     if _pg_is_running():
         typer.echo("PostgreSQL is already running.")
-        return
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = RUNTIME_DIR / "postgres.log"
-    _pg_ctl("start", "-l", str(log_file), check=True)
-    typer.echo("PostgreSQL started.")
+    else:
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        log_file = RUNTIME_DIR / "postgres.log"
+        _pg_ctl("start", "-l", str(log_file), check=True)
+        typer.echo("PostgreSQL started.")
+
+    _ensure_app_db()
+
+
+def _ensure_app_db() -> None:
+    """Create the application database if it doesn't already exist."""
+    cfg = _cfg()
+    result = subprocess.run(
+        [
+            "psql", "-h", cfg.database.socket_dir, "-d", "postgres", "-tAc",
+            f"SELECT 1 FROM pg_database WHERE datname='{cfg.database.name}'",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout.strip() != "1":
+        typer.echo(f"Creating database: {cfg.database.name}")
+        subprocess.run(
+            ["createdb", "-h", cfg.database.socket_dir, cfg.database.name],
+            check=True,
+        )
 
 
 @db_app.command("stop")
@@ -98,53 +160,37 @@ def db_shell():
 
 @app.command()
 def init():
-    """Initialize database: initdb, start postgres, create DB, run migrations."""
-    cfg = _cfg()
-    data_dir = Path(cfg.database.data_dir)
-
-    if not (data_dir / "PG_VERSION").exists():
-        typer.echo(f"Initializing PostgreSQL data directory: {data_dir}")
-        data_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["initdb", "-D", str(data_dir), "--auth=trust"],
-            check=True,
-        )
-        # Configure postgres to use our runtime dir for the Unix socket.
-        socket_dir = Path(cfg.database.socket_dir)
-        socket_dir.mkdir(parents=True, exist_ok=True)
-        conf = data_dir / "postgresql.conf"
-        with open(conf, "a") as f:
-            f.write(f"\nunix_socket_directories = '{socket_dir}'\n")
-            f.write(f"port = {cfg.database.port}\n")
-    else:
-        typer.echo("PostgreSQL data directory already initialized, skipping initdb.")
-
+    """Initialize database: start postgres, create app DB, run migrations."""
     db_start()
-
-    # Create the application database if it doesn't exist.
-    result = subprocess.run(
-        ["psql", "-h", cfg.database.socket_dir, "-d", "postgres", "-tAc",
-         f"SELECT 1 FROM pg_database WHERE datname='{cfg.database.name}'"],
-        capture_output=True, text=True,
-    )
-    if result.stdout.strip() != "1":
-        typer.echo(f"Creating database: {cfg.database.name}")
-        subprocess.run(
-            ["createdb", "-h", cfg.database.socket_dir, cfg.database.name],
-            check=True,
-        )
-
     typer.echo("Running migrations...")
     subprocess.run(["alembic", "upgrade", "head"], check=True)
     typer.echo("Initialization complete.")
 
 
 @app.command()
-def sync():
+def sync(
+    from_date: Optional[str] = typer.Option(
+        None,
+        "--from-date",
+        metavar="YYYY-MM-DD",
+        help="Only sync PRs updated on or after this date (default: all time).",
+    ),
+):
     """Run a one-shot sync from GitHub to the database."""
     from staged_recipe_dashboard.worker.sync import run_once
 
-    run_once(_cfg())
+    cfg = _cfg()
+    _configure_logging(cfg)
+
+    parsed_date = None
+    if from_date:
+        try:
+            parsed_date = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            typer.echo(f"Invalid date '{from_date}'. Expected format: YYYY-MM-DD", err=True)
+            raise typer.Exit(1)
+
+    run_once(cfg, from_date=parsed_date)
 
 
 @app.command()
@@ -152,7 +198,9 @@ def worker():
     """Start the background sync worker (APScheduler, blocking)."""
     from staged_recipe_dashboard.worker.scheduler import start_scheduler
 
-    start_scheduler(_cfg())
+    cfg = _cfg()
+    _configure_logging(cfg)
+    start_scheduler(cfg)
 
 
 @app.command()
@@ -161,12 +209,14 @@ def serve():
     import uvicorn
 
     cfg = _cfg()
+    _configure_logging(cfg)
     uvicorn.run(
         "staged_recipe_dashboard.backend.app:create_app",
         factory=True,
         host=cfg.server.host,
         port=cfg.server.port,
         reload=False,
+        log_config=None,  # let our root logger handle uvicorn's output
     )
 
 
@@ -194,6 +244,8 @@ def build_ui():
 @app.command()
 def start():
     """Start all components: postgres, background worker, and API server."""
+    cfg = _cfg()
+    _configure_logging(cfg)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
     if not _pg_is_running():
