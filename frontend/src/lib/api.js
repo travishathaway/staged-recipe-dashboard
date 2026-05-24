@@ -33,6 +33,16 @@ export function getPR(number) {
 }
 
 /**
+ * @param {'30d'|'90d'|'1y'|'3y'} period
+ * @param {string|null} team
+ */
+export function getScoreboard(period, team = null) {
+  const params = new URLSearchParams({ period })
+  if (team) params.set('team', team)
+  return fetchJSON(`${BASE}/scoreboard?${params}`)
+}
+
+/**
  * Format an ISO date string as "N days" waiting duration.
  * @param {string|null} isoDate
  */

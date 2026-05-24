@@ -1,9 +1,9 @@
 """REST API endpoints for the dashboard."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import and_, exists, func, not_, select, text
 from sqlalchemy.orm import Session
@@ -206,8 +206,6 @@ def get_stats(db: Session = Depends(get_db)):
 @router.get("/prs/{number}", response_model=PRResponse)
 def get_pr(number: int, db: Session = Depends(get_db)):
     """Get a single PR with its full label history."""
-    from fastapi import HTTPException
-
     pr = db.scalar(select(PullRequest).where(PullRequest.number == number))
     if pr is None:
         raise HTTPException(status_code=404, detail=f"PR #{number} not found")
@@ -220,3 +218,123 @@ def get_pr(number: int, db: Session = Depends(get_db)):
     )
 
     return _to_pr_response(pr, waiting_since, db)
+
+
+# ── Scoreboard ────────────────────────────────────────────────────────────────
+
+_PERIOD_DELTAS = {
+    "30d": timedelta(days=30),
+    "90d": timedelta(days=90),
+    "1y": timedelta(days=365),
+    "3y": timedelta(days=365 * 3),
+}
+
+
+class ReviewerScore(BaseModel):
+    login: str
+    formal_reviews: int
+    approved: int
+    changes_requested: int
+    dismissed: int
+    review_comments: int
+    last_active: datetime | None
+
+
+class ScoreboardResponse(BaseModel):
+    period: str
+    team: str | None
+    human_reviewers: list[ReviewerScore]
+    bots: list[ReviewerScore]
+
+
+@router.get("/scoreboard", response_model=ScoreboardResponse)
+def get_scoreboard(
+    period: Literal["30d", "90d", "1y", "3y"] = Query(
+        ..., description="Rolling time window for the scoreboard."
+    ),
+    team: str | None = Query(None, description="Filter to reviews on PRs tagged for this team."),
+    db: Session = Depends(get_db),
+):
+    """Reviewer scoreboard: formal reviews and review comments per contributor."""
+    cutoff = datetime.now(timezone.utc) - _PERIOD_DELTAS[period]
+
+    team_subquery = (
+        "AND r.pr_number IN (SELECT pr_number FROM pr_labels WHERE label_name = :team)"
+        if team else ""
+    )
+    comment_team_subquery = (
+        "AND c.pr_number IN (SELECT pr_number FROM pr_labels WHERE label_name = :team)"
+        if team else ""
+    )
+
+    params: dict = {"cutoff": cutoff}
+    if team:
+        params["team"] = team
+
+    sql = text(f"""
+        WITH review_stats AS (
+            SELECT
+                r.reviewer                                                              AS login,
+                r.reviewer_type,
+                COUNT(*) FILTER (WHERE r.state IN ('APPROVED','CHANGES_REQUESTED','DISMISSED'))
+                                                                                        AS formal_reviews,
+                COUNT(*) FILTER (WHERE r.state = 'APPROVED')                           AS approved,
+                COUNT(*) FILTER (WHERE r.state = 'CHANGES_REQUESTED')                  AS changes_requested,
+                COUNT(*) FILTER (WHERE r.state = 'DISMISSED')                          AS dismissed,
+                COUNT(*) FILTER (WHERE r.state = 'COMMENTED')                          AS commented_reviews,
+                MAX(r.submitted_at)                                                     AS last_review_at
+            FROM pr_reviews r
+            WHERE r.submitted_at >= :cutoff
+              {team_subquery}
+            GROUP BY r.reviewer, r.reviewer_type
+        ),
+        comment_stats AS (
+            SELECT
+                c.commenter                                                             AS login,
+                c.commenter_type                                                        AS reviewer_type,
+                COUNT(*)                                                                AS comment_count,
+                MAX(c.created_at)                                                       AS last_comment_at
+            FROM pr_review_comments c
+            WHERE c.created_at >= :cutoff
+              {comment_team_subquery}
+            GROUP BY c.commenter, c.commenter_type
+        )
+        SELECT
+            COALESCE(r.login, c.login)                                                  AS login,
+            COALESCE(r.reviewer_type, c.reviewer_type)                                  AS reviewer_type,
+            COALESCE(r.formal_reviews, 0)                                               AS formal_reviews,
+            COALESCE(r.approved, 0)                                                     AS approved,
+            COALESCE(r.changes_requested, 0)                                            AS changes_requested,
+            COALESCE(r.dismissed, 0)                                                    AS dismissed,
+            COALESCE(r.commented_reviews, 0) + COALESCE(c.comment_count, 0)            AS review_comments,
+            GREATEST(r.last_review_at, c.last_comment_at)                              AS last_active
+        FROM review_stats r
+        FULL OUTER JOIN comment_stats c ON r.login = c.login
+        ORDER BY formal_reviews DESC, review_comments DESC
+    """)
+
+    rows = db.execute(sql, params).mappings().all()
+
+    human_reviewers = []
+    bots = []
+    for row in rows:
+        score = ReviewerScore(
+            login=row["login"],
+            formal_reviews=row["formal_reviews"],
+            approved=row["approved"],
+            changes_requested=row["changes_requested"],
+            dismissed=row["dismissed"],
+            review_comments=row["review_comments"],
+            last_active=row["last_active"],
+        )
+        if row["reviewer_type"] == "Bot":
+            bots.append(score)
+        else:
+            human_reviewers.append(score)
+
+    return ScoreboardResponse(
+        period=period,
+        team=team,
+        human_reviewers=human_reviewers,
+        bots=bots,
+    )

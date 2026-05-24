@@ -15,6 +15,7 @@ def start_scheduler(cfg: AppConfig) -> None:
     """Start the blocking scheduler; runs until interrupted."""
     from staged_recipe_dashboard.worker.sync import run_once
     from staged_recipe_dashboard.worker.events import sync_label_history
+    from staged_recipe_dashboard.worker.review_sync import sync_reviews
 
     scheduler = BlockingScheduler()
 
@@ -34,10 +35,19 @@ def start_scheduler(cfg: AppConfig) -> None:
         next_run_time=datetime.now(timezone.utc),
     )
 
+    scheduler.add_job(
+        lambda: sync_reviews(cfg, open_only=True),
+        trigger=IntervalTrigger(minutes=cfg.worker.review_sync_interval_minutes),
+        id="sync_reviews",
+        name="Sync formal reviews from GitHub Reviews API",
+        next_run_time=datetime.now(timezone.utc),
+    )
+
     logger.info(
-        "Scheduler started (PR sync every %dm, label history every %dm)",
+        "Scheduler started (PR sync every %dm, label history every %dm, reviews every %dm)",
         cfg.worker.sync_interval_minutes,
         cfg.worker.events_interval_minutes,
+        cfg.worker.review_sync_interval_minutes,
     )
 
     try:

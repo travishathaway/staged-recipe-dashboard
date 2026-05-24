@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -55,3 +55,28 @@ class PRLabelHistory(Base):
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     pr: Mapped["PullRequest"] = relationship(back_populates="label_history")
+
+
+class PRReview(Base):
+    __tablename__ = "pr_reviews"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    pr_number: Mapped[int] = mapped_column(
+        ForeignKey("pull_requests.number", ondelete="CASCADE"), nullable=False
+    )
+    reviewer: Mapped[str] = mapped_column(String, nullable=False)
+    reviewer_type: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PRReviewComment(Base):
+    __tablename__ = "pr_review_comments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    pr_number: Mapped[int] = mapped_column(
+        ForeignKey("pull_requests.number", ondelete="CASCADE"), nullable=False
+    )
+    commenter: Mapped[str] = mapped_column(String, nullable=False)
+    commenter_type: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

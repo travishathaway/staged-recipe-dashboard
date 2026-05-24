@@ -193,6 +193,96 @@ def sync(
     run_once(cfg, from_date=parsed_date)
 
 
+@app.command("extract-comments")
+def extract_comments(
+    pr_state: str = typer.Option(
+        "all",
+        "--pr-state",
+        metavar="open|closed|all",
+        help="Which PRs to process (default: all).",
+    ),
+    batch_size: int = typer.Option(
+        500,
+        "--batch-size",
+        help="Commit after this many PRs (default: 500).",
+    ),
+):
+    """Backfill pr_review_comments from stored JSONB (no API calls, fast).
+
+    Extracts general PR discussion comments from the perceval-stored data.
+    For formal reviews (APPROVED/CHANGES_REQUESTED), use srdb sync-reviews instead.
+    """
+    import psycopg2
+    from staged_recipe_dashboard.worker.reviews import extract_comments_from_row, upsert_comments
+
+    if pr_state not in ("open", "closed", "all"):
+        typer.echo("--pr-state must be one of: open, closed, all", err=True)
+        raise typer.Exit(1)
+
+    cfg = _cfg()
+    _configure_logging(cfg)
+
+    conn = psycopg2.connect(database=cfg.database.name, host=cfg.database.socket_dir)
+    count_cur = conn.cursor()
+    data_cur = conn.cursor()
+    write_cur = conn.cursor()
+
+    try:
+        state_filter = "" if pr_state == "all" else "WHERE state = %s"
+        state_args = () if pr_state == "all" else (pr_state,)
+
+        count_cur.execute(f"SELECT COUNT(*) FROM pull_requests {state_filter}", state_args)
+        total = count_cur.fetchone()[0]
+
+        data_cur.execute(
+            f"SELECT number, data FROM pull_requests {state_filter} ORDER BY number",
+            state_args,
+        )
+
+        processed = 0
+        found = 0
+        for number, item in data_cur:
+            comments = extract_comments_from_row(number, item)
+            upsert_comments(write_cur, comments)
+            found += len(comments)
+            processed += 1
+
+            if processed % batch_size == 0:
+                conn.commit()
+                typer.echo(f"Processed {processed}/{total} PRs, {found} comments so far…")
+
+        conn.commit()
+        typer.echo(f"Done. Extracted {found} comments from {processed}/{total} PRs.")
+    finally:
+        count_cur.close()
+        data_cur.close()
+        write_cur.close()
+        conn.close()
+
+
+@app.command("sync-reviews")
+def sync_reviews_cmd(
+    open_only: bool = typer.Option(
+        False,
+        "--open-only",
+        help="Only fetch reviews for open PRs (faster; skips closed PRs with no review data).",
+    ),
+):
+    """Backfill pr_reviews by calling the GitHub Reviews API (one request per PR, slow).
+
+    Without --open-only: fetches reviews for all open PRs and any PR that has
+    never had reviews fetched. Use this for the initial backfill.
+
+    With --open-only: fetches only open PRs. Use this for incremental top-ups
+    after the initial backfill is done.
+    """
+    from staged_recipe_dashboard.worker.review_sync import sync_reviews
+
+    cfg = _cfg()
+    _configure_logging(cfg)
+    sync_reviews(cfg, open_only=open_only)
+
+
 @app.command()
 def worker():
     """Start the background sync worker (APScheduler, blocking)."""

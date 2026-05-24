@@ -36,6 +36,7 @@ class DatabaseConfig:
 class WorkerConfig:
     sync_interval_minutes: int = 1
     events_interval_minutes: int = 60
+    review_sync_interval_minutes: int = 120
     github_tokens: list[str] = field(default_factory=list)
 
     @classmethod

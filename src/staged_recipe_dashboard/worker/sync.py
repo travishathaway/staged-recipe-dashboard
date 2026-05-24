@@ -8,6 +8,7 @@ import psycopg2
 from perceval.backends.core.github import GitHub
 
 from staged_recipe_dashboard.config import AppConfig, RUNTIME_DIR
+from staged_recipe_dashboard.worker.reviews import extract_comments_from_row, upsert_comments
 
 OWNER = "conda-forge"
 REPO = "staged-recipes"
@@ -85,11 +86,16 @@ def _sync_batch(cur, batch: list[tuple]) -> None:
                 [(number, label) for label in labels],
             )
 
+        # row[10] is the JSON string of the full perceval item stored in the data column
+        item = json.loads(row[10])
+        comments = extract_comments_from_row(number, item)
+        upsert_comments(cur, comments)
+
 
 def run_once(cfg: AppConfig, from_date: datetime | None = None) -> None:
     """Fetch PRs from GitHub and upsert into postgres.
 
-    from_date behaviour:
+    from_date behavior:
       - Explicitly provided (e.g. via --from-date): used as-is.
       - Not provided and last_sync.txt exists: uses last sync time minus
         OVERLAP_MINUTES to avoid missing PRs at the boundary.
