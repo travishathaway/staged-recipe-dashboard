@@ -39,8 +39,8 @@ def _reviews_for_pr(client: httpx.Client, pr_number: int) -> list[tuple]:
 def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
     """Fetch formal reviews from the GitHub Reviews API and upsert into pr_reviews.
 
-    open_only=False (default / backfill):
-        Processes open PRs + any PR that has never had reviews fetched.
+    open_only=False (default / full sync):
+        Processes all PRs — open PRs plus any PR not yet in pr_reviews.
     open_only=True (scheduled runs):
         Processes only open PRs, since reviews on closed PRs are immutable.
     """
@@ -56,20 +56,12 @@ def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
                 "SELECT number FROM pull_requests WHERE state = 'open' ORDER BY number"
             )
         else:
-            # Resume backfill from the PR after the highest one already processed.
-            # This avoids re-scanning from PR #1 when a previous run was interrupted.
-            # Open PRs are always refreshed regardless of the resume point.
-            cur.execute("SELECT COALESCE(MAX(pr_number) + 1, 0) FROM pr_reviews")
-            resume_from = cur.fetchone()[0]
-            logger.info("Backfill resume point: PR #%d", resume_from)
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT number FROM pull_requests
-                WHERE state = 'open' OR number >= %s
+                WHERE state = 'open'
+                   OR number NOT IN (SELECT DISTINCT pr_number FROM pr_reviews)
                 ORDER BY number
-                """,
-                (resume_from,),
-            )
+            """)
         pr_numbers = [row[0] for row in cur.fetchall()]
 
         if not pr_numbers:
