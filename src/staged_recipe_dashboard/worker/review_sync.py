@@ -40,7 +40,7 @@ def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
     """Fetch formal reviews from the GitHub Reviews API and upsert into pr_reviews.
 
     open_only=False (default / full sync):
-        Processes every PR not yet present in pr_reviews.
+        Processes every PR where reviews_fetched_at IS NULL (including zero-review PRs).
     open_only=True (scheduled runs):
         Processes only open PRs, since reviews on closed PRs are immutable.
     """
@@ -57,11 +57,12 @@ def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
             )
             pr_numbers = [row[0] for row in cur.fetchall()]
         else:
-            cur.execute("SELECT number FROM pull_requests ORDER BY number")
-            all_numbers = {row[0] for row in cur.fetchall()}
-            cur.execute("SELECT DISTINCT pr_number FROM pr_reviews")
-            reviewed = {row[0] for row in cur.fetchall()}
-            pr_numbers = sorted(all_numbers - reviewed)
+            cur.execute("""
+                SELECT number FROM pull_requests
+                WHERE reviews_fetched_at IS NULL
+                ORDER BY number
+            """)
+            pr_numbers = [row[0] for row in cur.fetchall()]
 
         if not pr_numbers:
             logger.info("Reviews up to date; nothing to fetch.")
@@ -79,6 +80,10 @@ def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
             for i, number in enumerate(pr_numbers):
                 rows = _reviews_for_pr(client, number)
                 upsert_reviews(cur, rows)
+                cur.execute(
+                    "UPDATE pull_requests SET reviews_fetched_at = NOW() WHERE number = %s",
+                    (number,),
+                )
 
                 if (i + 1) % 50 == 0:
                     conn.commit()

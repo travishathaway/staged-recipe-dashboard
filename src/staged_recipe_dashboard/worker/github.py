@@ -47,6 +47,11 @@ def _paginate(client: httpx.Client, url: str) -> Iterator[dict]:
             time.sleep(wait)
             continue
 
+        if resp.status_code >= 500:
+            logger.warning("GitHub API error %d for %s — retrying in 30s", resp.status_code, url)
+            time.sleep(30)
+            continue
+
         if not resp.is_success:
             logger.error("GitHub API error %d for %s — skipping", resp.status_code, url)
             return

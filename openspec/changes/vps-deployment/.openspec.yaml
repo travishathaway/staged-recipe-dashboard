@@ -1,0 +1,7 @@
+name: vps-deployment
+status: in-progress
+created: 2026-05-24
+artifacts:
+  - proposal.md
+  - design.md
+  - tasks.md
