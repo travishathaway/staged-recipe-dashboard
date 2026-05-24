@@ -5,40 +5,15 @@ Supplements perceval (which doesn't fetch issue events) to record when
 """
 
 import logging
-import time
-from typing import Iterator
 
 import httpx
-import psycopg2
 
 from staged_recipe_dashboard.config import AppConfig
+from staged_recipe_dashboard.worker.github import OWNER, REPO, _connect, _paginate
 
-OWNER = "conda-forge"
-REPO = "staged-recipes"
 EVENTS_URL = f"https://api.github.com/repos/{OWNER}/{REPO}/issues/{{number}}/events"
 
 logger = logging.getLogger(__name__)
-
-
-def _connect(cfg: AppConfig):
-    return psycopg2.connect(database=cfg.database.name, host=cfg.database.socket_dir)
-
-
-def _paginate(client: httpx.Client, url: str) -> Iterator[dict]:
-    """Yield all events from a paginated GitHub events endpoint."""
-    while url:
-        resp = client.get(url)
-        resp.raise_for_status()
-
-        remaining = int(resp.headers.get("X-RateLimit-Remaining", 1))
-        if remaining == 0:
-            reset = int(resp.headers.get("X-RateLimit-Reset", time.time() + 60))
-            wait = max(0, reset - time.time()) + 1
-            logger.warning("Rate limit hit; sleeping %ds", wait)
-            time.sleep(wait)
-
-        yield from resp.json()
-        url = resp.links.get("next", {}).get("url", "")
 
 
 def _find_label_applied_at(client: httpx.Client, pr_number: int, label: str) -> str | None:

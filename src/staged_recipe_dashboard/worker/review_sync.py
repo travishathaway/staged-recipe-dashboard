@@ -5,41 +5,16 @@ include reviews_data) by calling the dedicated pulls reviews endpoint per PR.
 """
 
 import logging
-import time
-from typing import Iterator
 
 import httpx
-import psycopg2
 
 from staged_recipe_dashboard.config import AppConfig
+from staged_recipe_dashboard.worker.github import OWNER, REPO, _connect, _paginate
 from staged_recipe_dashboard.worker.reviews import upsert_reviews
 
-OWNER = "conda-forge"
-REPO = "staged-recipes"
 REVIEWS_URL = f"https://api.github.com/repos/{OWNER}/{REPO}/pulls/{{number}}/reviews"
 
 logger = logging.getLogger(__name__)
-
-
-def _connect(cfg: AppConfig):
-    return psycopg2.connect(database=cfg.database.name, host=cfg.database.socket_dir)
-
-
-def _paginate(client: httpx.Client, url: str) -> Iterator[dict]:
-    """Yield all review objects from a paginated GitHub reviews endpoint."""
-    while url:
-        resp = client.get(url)
-        resp.raise_for_status()
-
-        remaining = int(resp.headers.get("X-RateLimit-Remaining", 1))
-        if remaining == 0:
-            reset = int(resp.headers.get("X-RateLimit-Reset", time.time() + 60))
-            wait = max(0, reset - time.time()) + 1
-            logger.warning("Rate limit hit; sleeping %ds", wait)
-            time.sleep(wait)
-
-        yield from resp.json()
-        url = resp.links.get("next", {}).get("url", "")
 
 
 def _reviews_for_pr(client: httpx.Client, pr_number: int) -> list[tuple]:
@@ -81,12 +56,20 @@ def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
                 "SELECT number FROM pull_requests WHERE state = 'open' ORDER BY number"
             )
         else:
-            cur.execute("""
+            # Resume backfill from the PR after the highest one already processed.
+            # This avoids re-scanning from PR #1 when a previous run was interrupted.
+            # Open PRs are always refreshed regardless of the resume point.
+            cur.execute("SELECT COALESCE(MAX(pr_number) + 1, 0) FROM pr_reviews")
+            resume_from = cur.fetchone()[0]
+            logger.info("Backfill resume point: PR #%d", resume_from)
+            cur.execute(
+                """
                 SELECT number FROM pull_requests
-                WHERE state = 'open'
-                   OR number NOT IN (SELECT DISTINCT pr_number FROM pr_reviews)
+                WHERE state = 'open' OR number >= %s
                 ORDER BY number
-            """)
+                """,
+                (resume_from,),
+            )
         pr_numbers = [row[0] for row in cur.fetchall()]
 
         if not pr_numbers:
