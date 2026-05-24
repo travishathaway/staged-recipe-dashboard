@@ -42,7 +42,8 @@ def _paginate(client: httpx.Client, url: str) -> Iterator[dict]:
             continue
 
         if resp.status_code == 403:
-            wait = int(resp.headers.get("X-RateLimit-Remaining", 200)) + 1
+            reset = int(resp.headers.get("X-RateLimit-Reset", time.time() + 60))
+            wait = max(0, reset - time.time()) + 1
             logger.warning("Secondary rate limit (403); sleeping %ds", wait)
             time.sleep(wait)
             continue
