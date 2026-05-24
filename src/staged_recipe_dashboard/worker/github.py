@@ -47,7 +47,9 @@ def _paginate(client: httpx.Client, url: str) -> Iterator[dict]:
             time.sleep(wait)
             continue
 
-        resp.raise_for_status()
+        if not resp.is_success:
+            logger.error("GitHub API error %d for %s — skipping", resp.status_code, url)
+            return
 
         remaining = int(resp.headers.get("X-RateLimit-Remaining", 1))
         if remaining == 0:

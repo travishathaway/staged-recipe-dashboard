@@ -40,7 +40,7 @@ def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
     """Fetch formal reviews from the GitHub Reviews API and upsert into pr_reviews.
 
     open_only=False (default / full sync):
-        Processes all PRs — open PRs plus any PR not yet in pr_reviews.
+        Processes every PR not yet present in pr_reviews.
     open_only=True (scheduled runs):
         Processes only open PRs, since reviews on closed PRs are immutable.
     """
@@ -55,14 +55,13 @@ def sync_reviews(cfg: AppConfig, open_only: bool = False) -> None:
             cur.execute(
                 "SELECT number FROM pull_requests WHERE state = 'open' ORDER BY number"
             )
+            pr_numbers = [row[0] for row in cur.fetchall()]
         else:
-            cur.execute("""
-                SELECT number FROM pull_requests
-                WHERE state = 'open'
-                   OR number NOT IN (SELECT DISTINCT pr_number FROM pr_reviews)
-                ORDER BY number
-            """)
-        pr_numbers = [row[0] for row in cur.fetchall()]
+            cur.execute("SELECT number FROM pull_requests ORDER BY number")
+            all_numbers = {row[0] for row in cur.fetchall()}
+            cur.execute("SELECT DISTINCT pr_number FROM pr_reviews")
+            reviewed = {row[0] for row in cur.fetchall()}
+            pr_numbers = sorted(all_numbers - reviewed)
 
         if not pr_numbers:
             logger.info("Reviews up to date; nothing to fetch.")
