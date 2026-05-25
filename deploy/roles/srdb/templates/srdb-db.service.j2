@@ -1,0 +1,29 @@
+[Unit]
+Description=srdb bundled PostgreSQL server
+After=network.target
+Before=srdb-worker.service srdb-server.service
+
+[Service]
+Type=forking
+User={{ srdb_service_user }}
+Group={{ srdb_service_group }}
+RuntimeDirectory=srdb
+Environment=PATH={{ srdb_env_dir }}/bin:/usr/bin:/bin
+Environment=HOME=/home/{{ srdb_service_user }}
+Environment=XDG_RUNTIME_DIR=/run/srdb
+ExecStart={{ srdb_env_dir }}/bin/pg_ctl \
+    -D {{ srdb_data_dir }}/pgdata \
+    -l {{ srdb_data_dir }}/postgres.log \
+    start
+ExecStop={{ srdb_env_dir }}/bin/pg_ctl \
+    -D {{ srdb_data_dir }}/pgdata \
+    stop
+ExecReload={{ srdb_env_dir }}/bin/pg_ctl \
+    -D {{ srdb_data_dir }}/pgdata \
+    reload
+PIDFile={{ srdb_data_dir }}/pgdata/postmaster.pid
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

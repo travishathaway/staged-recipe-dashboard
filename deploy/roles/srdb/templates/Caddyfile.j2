@@ -1,0 +1,11 @@
+{{ srdb_domain }} {
+    handle /api/* {
+        reverse_proxy localhost:{{ srdb_server_port }}
+    }
+
+    handle {
+        root * {{ srdb_html_dir }}
+        try_files {path} /index.html
+        file_server
+    }
+}

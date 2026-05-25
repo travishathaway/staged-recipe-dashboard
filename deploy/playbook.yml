@@ -1,0 +1,8 @@
+---
+- name: Deploy staged-recipe-dashboard
+  hosts: srdb
+  become: true
+  vars_files:
+    - secrets.yml
+  roles:
+    - srdb

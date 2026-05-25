@@ -224,3 +224,5 @@ pgdata/
 config.toml
 
 frontend/node_modules
+
+deploy/secrets.yml

@@ -1,0 +1,9 @@
+all:
+  hosts:
+    srdb:
+      # Replace with your VPS IP address or hostname.
+      ansible_host: srdb.thath.net
+      # SSH user with sudo access (often root or ubuntu/debian on cloud VMs).
+      ansible_user: thath
+      # Uncomment and set if using a non-default SSH key:
+      # ansible_ssh_private_key_file: ~/.ssh/id_rsa

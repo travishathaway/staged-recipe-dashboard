@@ -1,0 +1,33 @@
+---
+# srdb init is fully idempotent:
+#   - First deploy: initdb, start postgres, create DB, run migrations
+#   - Updates:      start postgres (skips initdb, pgdata exists), run any new migrations
+# Postgres is stopped at the end so systemd takes exclusive ownership.
+
+- name: Create runtime directory for srdb service
+  ansible.builtin.file:
+    path: /run/srdb
+    state: directory
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    mode: "0750"
+
+- name: Initialize or migrate database
+  ansible.builtin.command:
+    cmd: "{{ srdb_env_dir }}/bin/srdb init"
+  environment:
+    PATH: "{{ srdb_env_dir }}/bin:/usr/bin:/bin"
+    HOME: "/home/{{ srdb_service_user }}"
+    XDG_RUNTIME_DIR: "/run/srdb"
+  become_user: "{{ srdb_service_user }}"
+
+- name: Stop postgres so systemd takes ownership
+  ansible.builtin.command:
+    cmd: "{{ srdb_env_dir }}/bin/srdb db stop"
+  environment:
+    PATH: "{{ srdb_env_dir }}/bin:/usr/bin:/bin"
+    HOME: "/home/{{ srdb_service_user }}"
+    XDG_RUNTIME_DIR: "/run/srdb"
+  become_user: "{{ srdb_service_user }}"
+  failed_when: false
+  changed_when: false

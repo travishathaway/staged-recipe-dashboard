@@ -1,0 +1,56 @@
+---
+- name: Create systemd runtime directory for srdb
+  ansible.builtin.file:
+    path: /run/srdb
+    state: directory
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    mode: "0755"
+
+- name: Create /etc/tmpfiles.d entry to recreate /run/srdb on boot
+  ansible.builtin.copy:
+    content: "d /run/srdb 0755 {{ srdb_service_user }} {{ srdb_service_group }} -\n"
+    dest: /etc/tmpfiles.d/srdb.conf
+    mode: "0644"
+
+- name: Install srdb-db systemd unit
+  ansible.builtin.template:
+    src: srdb-db.service.j2
+    dest: /etc/systemd/system/srdb-db.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install srdb-worker systemd unit
+  ansible.builtin.template:
+    src: srdb-worker.service.j2
+    dest: /etc/systemd/system/srdb-worker.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install srdb-server systemd unit
+  ansible.builtin.template:
+    src: srdb-server.service.j2
+    dest: /etc/systemd/system/srdb-server.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers (reload systemd before enabling units)
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start srdb-db
+  ansible.builtin.systemd:
+    name: srdb-db
+    enabled: true
+    state: started
+
+- name: Enable and start srdb-worker
+  ansible.builtin.systemd:
+    name: srdb-worker
+    enabled: true
+    state: started
+
+- name: Enable and start srdb-server
+  ansible.builtin.systemd:
+    name: srdb-server
+    enabled: true
+    state: started

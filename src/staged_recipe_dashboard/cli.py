@@ -158,13 +158,37 @@ def db_shell():
 # ── Top-level commands ────────────────────────────────────────────────────────
 
 
+def _run_migrations() -> None:
+    """Run alembic migrations using the installed package's migration directory.
+
+    Uses the Python API so this works regardless of CWD — important for
+    deployed environments where alembic.ini is not present on the filesystem.
+    """
+    from alembic import command as alembic_command
+    from alembic.config import Config as AlembicConfig
+
+    migrations_dir = Path(__file__).parent / "db" / "migrations"
+    alembic_cfg = AlembicConfig()
+    alembic_cfg.set_main_option("script_location", str(migrations_dir))
+    alembic_cfg.set_main_option("sqlalchemy.url", _cfg().database.url)
+    alembic_command.upgrade(alembic_cfg, "head")
+
+
 @app.command()
 def init():
     """Initialize database: start postgres, create app DB, run migrations."""
     db_start()
     typer.echo("Running migrations...")
-    subprocess.run(["alembic", "upgrade", "head"], check=True)
+    _run_migrations()
     typer.echo("Initialization complete.")
+
+
+@app.command()
+def migrate():
+    """Run Alembic migrations against the running database (upgrade head)."""
+    typer.echo("Running migrations...")
+    _run_migrations()
+    typer.echo("Migrations complete.")
 
 
 @app.command()

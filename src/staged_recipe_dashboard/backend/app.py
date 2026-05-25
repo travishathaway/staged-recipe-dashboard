@@ -1,18 +1,13 @@
 """FastAPI application factory."""
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 _engine = None
 _SessionLocal = None
-
-STATIC_DIR = Path(__file__).parent.parent / "static"
 
 
 def get_engine():
@@ -57,18 +52,5 @@ def create_app() -> FastAPI:
     from staged_recipe_dashboard.backend.routes.api import router
 
     app.include_router(router)
-
-    # Serve Vite-generated assets (mounted before the catch-all).
-    assets_dir = STATIC_DIR / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
-
-    # SPA catch-all: any non-/api path returns index.html so Svelte routing works.
-    @app.get("/{path:path}", include_in_schema=False)
-    async def spa_fallback(path: str):
-        index = STATIC_DIR / "index.html"
-        if not index.exists():
-            return {"detail": "Frontend not built. Run `srdb build-ui` first."}
-        return FileResponse(str(index))
 
     return app

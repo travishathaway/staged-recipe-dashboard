@@ -1,0 +1,53 @@
+---
+# Install Caddy from the official package repository.
+# Caddy handles TLS certificates from Let's Encrypt automatically.
+# Ports 80 and 443 must be open on the VPS firewall.
+
+- name: Install required packages for Caddy apt repo
+  ansible.builtin.apt:
+    name:
+      - debian-keyring
+      - debian-archive-keyring
+      - apt-transport-https
+      - curl
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Add Caddy apt signing key
+  ansible.builtin.shell:
+    cmd: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    creates: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  when: ansible_os_family == "Debian"
+
+- name: Add Caddy apt repository
+  ansible.builtin.shell:
+    cmd: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+    creates: /etc/apt/sources.list.d/caddy-stable.list
+  when: ansible_os_family == "Debian"
+
+- name: Install Caddy (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Install Caddy (RedHat/CentOS)
+  ansible.builtin.dnf:
+    name: caddy
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Write Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    mode: "0644"
+  notify: Reload Caddy
+
+- name: Enable and start Caddy
+  ansible.builtin.systemd:
+    name: caddy
+    enabled: true
+    state: started

@@ -1,17 +1,21 @@
-{% set version = "0.1.0" %}
+context:
+  version: "0.1.0"
 
 package:
   name: staged-recipe-dashboard
-  version: {{ version }}
+  version: ${{ version }}
 
 source:
-  path: ..
+  path: ../
 
 build:
   number: 0
-  script: bash {{ RECIPE_DIR }}/build.sh
-  entry_points:
-    - srdb = staged_recipe_dashboard.cli:app
+  noarch: python
+  python:
+    entry_points:
+      - srdb = staged_recipe_dashboard.cli:app
+  script:
+    - $PYTHON -m pip install . --no-deps --no-build-isolation -vv
 
 requirements:
   host:
@@ -20,7 +24,7 @@ requirements:
     - hatchling
   run:
     - python >=3.11
-    - postgresql >=16        # bundled server + client tools (initdb, pg_ctl, psql)
+    - postgresql >=16
     - psycopg2 >=2.9
     - fastapi >=0.110
     - uvicorn >=0.29
@@ -30,10 +34,9 @@ requirements:
     - apscheduler >=3.10
     - typer >=0.12
     - platformdirs >=4.2
-    # perceval is not on conda-forge; install via pip post-install or add a pip dep
-    - pip
+    - perceval >=1.4.7
 
 about:
-  home: https://github.com/conda-forge/staged-recipe-dashboard
+  homepage: https://github.com/conda-forge/staged-recipe-dashboard
   license: MIT
   summary: Dashboard for conda-forge staged-recipe PR reviewers

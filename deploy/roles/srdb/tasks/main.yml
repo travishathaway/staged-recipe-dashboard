@@ -1,0 +1,7 @@
+---
+# config must come before db so that config.toml exists when srdb init runs.
+- import_tasks: install.yml
+- import_tasks: config.yml
+- import_tasks: db.yml
+- import_tasks: systemd.yml
+- import_tasks: caddy.yml

@@ -1,0 +1,14 @@
+[database]
+data_dir   = "{{ srdb_data_dir }}/pgdata"
+socket_dir = "{{ srdb_data_dir }}"
+
+[worker]
+github_tokens = {{ github_tokens | tojson }}
+
+[server]
+host = "0.0.0.0"
+port = {{ srdb_server_port }}
+
+[logging]
+file  = "{{ srdb_data_dir }}/app.log"
+level = "INFO"

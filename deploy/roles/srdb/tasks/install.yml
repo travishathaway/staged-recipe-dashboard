@@ -1,0 +1,84 @@
+---
+- name: Create srdb service group
+  ansible.builtin.group:
+    name: "{{ srdb_service_group }}"
+    system: true
+    state: present
+
+- name: Create srdb service user
+  ansible.builtin.user:
+    name: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "/home/{{ srdb_service_user }}"
+    create_home: true
+    state: present
+
+- name: Create install directory
+  ansible.builtin.file:
+    path: "{{ srdb_install_dir }}"
+    state: directory
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    mode: "0755"
+
+- name: Create data directory
+  ansible.builtin.file:
+    path: "{{ srdb_data_dir }}"
+    state: directory
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    mode: "0750"
+
+- name: Create html directory for frontend assets
+  ansible.builtin.file:
+    path: "{{ srdb_html_dir }}"
+    state: directory
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    mode: "0755"
+
+- name: Upload frontend assets
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../frontend/dist/"
+    dest: "{{ srdb_html_dir }}/"
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    mode: "0644"
+
+- name: Stop services before swap (update only)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - srdb-server
+    - srdb-worker
+    - srdb-db
+  failed_when: false
+  changed_when: false
+
+- name: Upload installer script
+  ansible.builtin.copy:
+    src: "{{ srdb_pack_local }}"
+    dest: /var/tmp/srdb-install.sh
+    mode: "0755"
+
+- name: Install environment to {{ srdb_install_dir }}
+  ansible.builtin.command:
+    cmd: bash /var/tmp/srdb-install.sh --output-directory {{ srdb_install_dir }}
+  environment:
+    TMPDIR: /var/tmp
+
+- name: Remove installer script
+  ansible.builtin.file:
+    path: /var/tmp/srdb-install.sh
+    state: absent
+
+- name: Fix ownership of installed environment
+  ansible.builtin.file:
+    path: "{{ srdb_install_dir }}"
+    state: directory
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    recurse: true

@@ -1,0 +1,18 @@
+[Unit]
+Description=srdb FastAPI/uvicorn server
+After=srdb-db.service
+Requires=srdb-db.service
+
+[Service]
+Type=simple
+User={{ srdb_service_user }}
+Group={{ srdb_service_group }}
+Environment=PATH={{ srdb_env_dir }}/bin:/usr/bin:/bin
+Environment=HOME=/home/{{ srdb_service_user }}
+Environment=XDG_RUNTIME_DIR=/run/srdb
+ExecStart={{ srdb_env_dir }}/bin/srdb serve
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
