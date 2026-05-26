@@ -6,83 +6,43 @@
   const STATUS_LABELS = new Set(['review-requested', 'Awaiting author contribution'])
   $: teamLabels = (pr.labels || []).filter(l => !STATUS_LABELS.has(l))
   $: isBlocked = (pr.labels || []).includes('Awaiting author contribution')
+  $: waitLabel = daysWaiting(pr.waiting_since)
+  $: isLong = parseInt(waitLabel) > 14
 </script>
 
-<article class="pr-card" class:blocked={isBlocked}>
-  <header>
-    <a href={pr.html_url} target="_blank" rel="noopener noreferrer" class="pr-title">
-      #{pr.number} {pr.title}
-    </a>
-    <span class="waiting" class:long={parseInt(daysWaiting(pr.waiting_since)) > 14}>
-      {daysWaiting(pr.waiting_since)}
-    </span>
-  </header>
-
-  <footer>
-    <span class="author">@{pr.author}</span>
-    <span class="labels">
-      {#each teamLabels as label}
-        <span class="label">{label}</span>
-      {/each}
-      {#if isBlocked}
-        <span class="label label--blocked">awaiting author</span>
-      {/if}
-    </span>
-  </footer>
+<article class="card mb-2 border-start border-3"
+  class:border-success={!isBlocked}
+  class:border-warning={isBlocked}
+  class:opacity-75={isBlocked}>
+  <div class="card-body py-2 px-3">
+    <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+      <a href={pr.html_url} target="_blank" rel="noopener noreferrer"
+        class="link-primary fw-medium text-decoration-none flex-grow-1" style="font-size:0.95rem">
+        <i class="bi bi-github"></i> #{pr.number} {pr.title}
+      </a>
+      <span class="badge text-nowrap"
+        class:bg-light={!isLong}
+        class:text-secondary={!isLong}
+        class:bg-danger-subtle={isLong}
+        class:text-danger={isLong}>
+        {waitLabel}
+      </span>
+    </div>
+    <div class="d-flex align-items-center gap-2 small text-secondary">
+      <span>@{pr.author}</span>
+      <span class="d-flex gap-1 flex-wrap">
+        {#each teamLabels as label}
+          <span class="badge bg-light text-secondary">{label}</span>
+        {/each}
+        {#if isBlocked}
+          <span class="badge bg-warning-subtle text-warning-emphasis">awaiting author</span>
+        {/if}
+      </span>
+    </div>
+  </div>
 </article>
 
 <style>
-  .pr-card {
-    background: #fff;
-    border: 1px solid #dee2e6;
-    border-left: 4px solid #198754;
-    border-radius: 6px;
-    padding: 12px 16px;
-    margin-bottom: 8px;
-  }
-  .pr-card.blocked {
-    border-left-color: #ffc107;
-    opacity: 0.85;
-  }
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 6px;
-  }
-  .pr-title {
-    color: #0d6efd;
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 0.95rem;
-    flex: 1;
-  }
-  .pr-title:hover { text-decoration: underline; }
-  .waiting {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #6c757d;
-    white-space: nowrap;
-    background: #f8f9fa;
-    padding: 2px 8px;
-    border-radius: 10px;
-  }
-  .waiting.long { color: #dc3545; background: #fff0f0; }
-  footer {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.8rem;
-  }
-  .author { color: #6c757d; }
-  .labels { display: flex; gap: 4px; flex-wrap: wrap; }
-  .label {
-    background: #e9ecef;
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-size: 0.75rem;
-    color: #495057;
-  }
-  .label--blocked { background: #fff3cd; color: #856404; }
+  /* Bootstrap has no single-side border-width utility, so we set left only */
+  .card { border-left-width: 4px !important; }
 </style>

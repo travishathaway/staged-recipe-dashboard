@@ -31,29 +31,33 @@
   $: name, load()
 </script>
 
-<header class="team-header">
-  <a href="/" use:link class="back">← All teams</a>
-  <h1><code>{name}</code> team</h1>
+<header class="mb-4">
+  <a href="/" use:link class="text-secondary text-decoration-none small d-inline-block mb-2">
+    <i class="bi bi-arrow-left me-1"></i>All teams
+  </a>
+  <h1 class="h4 fw-bold text-dark"><code class="bg-light px-2 py-1 rounded">{name}</code> team</h1>
 </header>
 
 {#if loading}
-  <p class="loading">Loading…</p>
+  <p class="text-secondary py-3">Loading…</p>
 {:else if error}
-  <p class="error">Error: {error}</p>
+  <p class="text-danger py-3">Error: {error}</p>
 {:else}
-  <div class="summary">
-    <span class="badge badge--green">{needsReview.length} awaiting review</span>
+  <div class="d-flex gap-2 mb-4 align-items-center">
+    <span class="badge bg-success">{needsReview.length} awaiting review</span>
     {#if blocked.length > 0}
-      <button class="badge badge--yellow" on:click={() => (showBlocked = !showBlocked)}>
-        {blocked.length} blocked {showBlocked ? '▲' : '▼'}
+      <button class="badge bg-warning text-dark border-0" style="cursor:pointer"
+        on:click={() => (showBlocked = !showBlocked)}>
+        {blocked.length} blocked
+        <i class="bi {showBlocked ? 'bi-chevron-up' : 'bi-chevron-down'} ms-1"></i>
       </button>
     {/if}
   </div>
 
   {#if needsReview.length === 0}
-    <p class="empty">No PRs awaiting review for this team.</p>
+    <p class="text-secondary">No PRs awaiting review for this team.</p>
   {:else}
-    <section class="pr-list">
+    <section class="mb-4">
       {#each needsReview as pr}
         <PRCard {pr} />
       {/each}
@@ -61,44 +65,11 @@
   {/if}
 
   {#if showBlocked && blocked.length > 0}
-    <section class="pr-list blocked-section">
-      <h2>Blocked on author ({blocked.length})</h2>
+    <section class="mb-4" style="opacity:0.85">
+      <h2 class="h6 fw-semibold text-secondary mb-3">Blocked on author ({blocked.length})</h2>
       {#each blocked as pr}
         <PRCard {pr} />
       {/each}
     </section>
   {/if}
 {/if}
-
-<style>
-  .team-header { margin-bottom: 20px; }
-  .back {
-    color: #6c757d;
-    text-decoration: none;
-    font-size: 0.85rem;
-    display: inline-block;
-    margin-bottom: 8px;
-  }
-  .back:hover { color: #0d6efd; }
-  h1 { font-size: 1.5rem; font-weight: 700; color: #212529; }
-  h1 code { background: #f1f3f5; padding: 2px 8px; border-radius: 4px; }
-  h2 { font-size: 1rem; font-weight: 600; color: #6c757d; margin-bottom: 12px; }
-
-  .summary { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
-  .badge {
-    font-size: 0.85rem;
-    font-weight: 600;
-    padding: 4px 12px;
-    border-radius: 12px;
-    border: none;
-    cursor: default;
-  }
-  .badge--green { background: #d1e7dd; color: #0a3622; }
-  .badge--yellow { background: #fff3cd; color: #664d03; cursor: pointer; }
-
-  .loading, .error, .empty { color: #6c757d; padding: 16px 0; }
-  .error { color: #dc3545; }
-
-  .pr-list { margin-bottom: 24px; }
-  .blocked-section { opacity: 0.85; }
-</style>

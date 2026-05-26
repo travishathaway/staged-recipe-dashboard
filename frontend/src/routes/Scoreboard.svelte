@@ -59,23 +59,25 @@
   }
 </script>
 
-<div class="scoreboard">
-  <h1>Reviewer Scoreboard</h1>
+<div style="max-width:900px">
+  <h1 class="h4 fw-bold mb-4">Reviewer Scoreboard</h1>
 
-  <div class="filters">
-    <div class="period-tabs">
+  <div class="d-flex align-items-center gap-4 mb-4 flex-wrap">
+    <div class="btn-group btn-group-sm" role="group" aria-label="Time period">
       {#each PERIODS as p}
         <button
-          class="period-tab"
-          class:active={period === p}
+          type="button"
+          class="btn"
+          class:btn-dark={period === p}
+          class:btn-outline-secondary={period !== p}
           on:click={() => onPeriodChange(p)}
         >{PERIOD_LABELS[p]}</button>
       {/each}
     </div>
 
-    <label class="team-filter">
+    <label class="d-flex align-items-center gap-2 small text-secondary">
       Team:
-      <select on:change={onTeamChange}>
+      <select class="form-select form-select-sm" style="width:auto" on:change={onTeamChange}>
         <option value="">All teams</option>
         {#each teams as team}
           <option value={team.name}>{team.name}</option>
@@ -85,24 +87,24 @@
   </div>
 
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="text-secondary py-3">Loading…</p>
   {:else if error}
-    <p class="error">Error: {error}</p>
+    <p class="text-danger py-3">Error: {error}</p>
   {:else if scoreboard}
-    <section>
-      <h2>Human Reviewers</h2>
+    <section class="mb-4">
+      <h2 class="h6 fw-semibold mb-3">Human Reviewers</h2>
       {#if scoreboard.human_reviewers.length === 0}
-        <p class="empty">No review activity in this period.</p>
+        <p class="text-secondary">No review activity in this period.</p>
       {:else}
-        <div class="table-wrap">
-          <table>
-            <thead>
+        <div class="table-responsive">
+          <table class="table table-hover table-sm">
+            <thead class="table-light">
               <tr>
                 <th>Reviewer</th>
                 <th title="Formal reviews: approved + changes requested + dismissed">Reviews</th>
-                <th title="Approved">✓</th>
-                <th title="Changes requested">↩</th>
-                <th title="Dismissed">✗</th>
+                <th title="Approved"><i class="bi bi-check-lg text-success"></i></th>
+                <th title="Changes requested"><i class="bi bi-arrow-return-left text-warning"></i></th>
+                <th title="Dismissed"><i class="bi bi-x-lg text-secondary"></i></th>
                 <th title="Inline code review comments + comment-only reviews">Comments</th>
                 <th>Last active</th>
               </tr>
@@ -128,14 +130,16 @@
     </section>
 
     {#if scoreboard.bots.length > 0}
-      <section class="bots-section">
-        <button class="collapsible" on:click={() => (botsOpen = !botsOpen)}>
-          {botsOpen ? '▼' : '▶'} Bots ({scoreboard.bots.length})
+      <section class="mt-2">
+        <button class="btn btn-link btn-sm text-secondary text-decoration-none fw-semibold ps-0"
+          on:click={() => (botsOpen = !botsOpen)}>
+          <i class="bi {botsOpen ? 'bi-chevron-down' : 'bi-chevron-right'} me-1"></i>
+          Bots ({scoreboard.bots.length})
         </button>
         {#if botsOpen}
-          <div class="table-wrap">
-            <table>
-              <thead>
+          <div class="table-responsive mt-2">
+            <table class="table table-hover table-sm">
+              <thead class="table-light">
                 <tr>
                   <th>Bot</th>
                   <th title="Formal reviews">Reviews</th>
@@ -164,73 +168,6 @@
 </div>
 
 <style>
-  .scoreboard { max-width: 900px; }
-
-  h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 20px; color: #212529; }
-  h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: 10px; color: #343a40; }
-
-  .filters {
-    display: flex;
-    align-items: center;
-    gap: 24px;
-    margin-bottom: 24px;
-    flex-wrap: wrap;
-  }
-
-  .period-tabs { display: flex; gap: 4px; }
-  .period-tab {
-    background: #f8f9fa;
-    border: 1px solid #dee2e6;
-    border-radius: 6px;
-    padding: 6px 14px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    color: #495057;
-    transition: background 0.12s;
-  }
-  .period-tab:hover { background: #e9ecef; }
-  .period-tab.active {
-    background: #2d2d2d;
-    color: #fff;
-    border-color: #2d2d2d;
-  }
-
-  .team-filter {
-    font-size: 0.85rem;
-    color: #495057;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .team-filter select {
-    border: 1px solid #dee2e6;
-    border-radius: 6px;
-    padding: 5px 10px;
-    font-size: 0.85rem;
-    background: #fff;
-  }
-
-  section { margin-bottom: 28px; }
-
-  .table-wrap { overflow-x: auto; }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.88rem;
-  }
-  thead th {
-    text-align: left;
-    padding: 8px 12px;
-    border-bottom: 2px solid #dee2e6;
-    color: #6c757d;
-    font-weight: 600;
-    white-space: nowrap;
-    cursor: default;
-  }
-  tbody tr:hover { background: #f8f9fa; }
-  td { padding: 7px 12px; border-bottom: 1px solid #f0f0f0; }
-
   .login a { color: #0d6efd; text-decoration: none; font-weight: 500; }
   .login a:hover { text-decoration: underline; }
 
@@ -242,20 +179,4 @@
   .comments { color: #0d6efd; }
 
   .ts { color: #6c757d; white-space: nowrap; font-size: 0.82rem; }
-
-  .bots-section { margin-top: 8px; }
-  .collapsible {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 0.9rem;
-    color: #6c757d;
-    padding: 4px 0;
-    margin-bottom: 8px;
-    font-weight: 600;
-  }
-  .collapsible:hover { color: #343a40; }
-
-  .loading, .error, .empty { color: #6c757d; padding: 16px 0; }
-  .error { color: #dc3545; }
 </style>
