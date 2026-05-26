@@ -15,7 +15,10 @@ router = APIRouter(prefix="/api")
 
 # Labels that carry status meaning, not team assignment.
 STATUS_LABELS = {"review-requested", "Awaiting author contribution"}
-
+TEAM_LABELS = {
+    "python", "python-c", "java", "c-cpp",
+    "nodejs", "R", "go", "rust", "perl",
+}
 
 # ── Pydantic response schemas ─────────────────────────────────────────────────
 
@@ -146,7 +149,7 @@ def list_teams(db: Session = Depends(get_db)):
         .join(PullRequest, PRLabel.pr_number == PullRequest.number)
         .where(
             PullRequest.state == "open",
-            PRLabel.label_name.notin_(STATUS_LABELS),
+            PRLabel.label_name.in_(TEAM_LABELS),
         )
         .distinct()
         .order_by(PRLabel.label_name)
