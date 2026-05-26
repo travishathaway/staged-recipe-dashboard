@@ -4925,8 +4925,8 @@ packages:
   requires_python: '>=3.11'
 - conda: /Users/travishathaway/dev/staged-recipe-dashboard/dist/channel/noarch/staged-recipe-dashboard-0.1.0-pyh4616a5c_0.conda
   subdir: noarch
-  sha256: e84db16cd9d8b3a7d446a4e1de59304bf9c002151262fab5b0aaf622b62c3aab
-  md5: e0d33a3fe6e084d3ef3ac6503ab83ae2
+  sha256: 40c01c491aa7738452bc17e60f8e3a0c23172211708d5eaa9beb722a5cc03f9d
+  md5: bda27985c920b9e8bd4468bcf7413de7
   depends:
   - python >=3.11
   - postgresql >=16
@@ -4943,8 +4943,8 @@ packages:
   - python
   channel: file:///Users/travishathaway/dev/staged-recipe-dashboard/dist/channel
   license: MIT
-  size: 23762
-  timestamp: 1779655694577
+  size: 23453
+  timestamp: 1779780016030
 - conda: https://conda.anaconda.org/conda-forge/noarch/starlette-1.0.1-pyhcf101f3_0.conda
   sha256: 056337f0e1242f87bf6bc3737c232c9252d29d658bc65d518a255b7cbc443394
   md5: 635faa8ce3a592deb2a12d71e891f697
