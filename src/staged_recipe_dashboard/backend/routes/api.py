@@ -5,11 +5,11 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, exists, func, not_, select, text
+from sqlalchemy import and_, exists, func, not_, or_, select, text, union_all
 from sqlalchemy.orm import Session
 
 from staged_recipe_dashboard.backend.app import get_db
-from staged_recipe_dashboard.backend.models import PRLabel, PRLabelHistory, PullRequest
+from staged_recipe_dashboard.backend.models import PRLabel, PRLabelHistory, PRReview, PRReviewComment, PullRequest
 
 router = APIRouter(prefix="/api")
 
@@ -32,6 +32,9 @@ class PRResponse(BaseModel):
     created_at: datetime | None
     waiting_since: datetime | None
     labels: list[str]
+    roles: list[str] = []
+    last_commenter: str | None = None
+    author_replied: bool = False
 
     class Config:
         from_attributes = True
@@ -41,6 +44,11 @@ class TeamResponse(BaseModel):
     name: str
     needs_review_count: int
     blocked_count: int
+
+
+class PRListResponse(BaseModel):
+    results: list[PRResponse]
+    total: int
 
 
 class StatsResponse(BaseModel):
@@ -78,6 +86,19 @@ def _blocked_filter():
     )
 
 
+def _no_human_formal_review_filter():
+    """Subquery: PR has no non-bot APPROVED/CHANGES_REQUESTED/DISMISSED review."""
+    return not_(
+        exists(
+            select(PRReview.id).where(
+                PRReview.pr_number == PullRequest.number,
+                PRReview.reviewer_type != "Bot",
+                PRReview.state.in_(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]),
+            )
+        )
+    )
+
+
 def _get_labels(db: Session, pr_number: int) -> list[str]:
     rows = db.execute(
         select(PRLabel.label_name).where(PRLabel.pr_number == pr_number)
@@ -85,7 +106,8 @@ def _get_labels(db: Session, pr_number: int) -> list[str]:
     return list(rows)
 
 
-def _to_pr_response(pr: PullRequest, waiting_since: datetime | None, db: Session) -> PRResponse:
+def _to_pr_response(pr: PullRequest, waiting_since: datetime | None, db: Session, roles: list[str] | None = None, last_commenter: str | None = None) -> PRResponse:
+    author_replied = bool(last_commenter and last_commenter == pr.author)
     return PRResponse(
         number=pr.number,
         title=pr.title,
@@ -95,27 +117,210 @@ def _to_pr_response(pr: PullRequest, waiting_since: datetime | None, db: Session
         created_at=pr.created_at,
         waiting_since=waiting_since,
         labels=_get_labels(db, pr.number),
+        roles=roles if roles is not None else [],
+        last_commenter=last_commenter,
+        author_replied=author_replied,
+    )
+
+
+def _role_annotations(username: str):
+    """Return three boolean SELECT columns for author/reviewer/commenter roles."""
+    is_author = (PullRequest.author == username).label("is_author")
+
+    is_reviewer = exists(
+        select(PRReview.id).where(
+            PRReview.pr_number == PullRequest.number,
+            PRReview.reviewer == username,
+        )
+    ).label("is_reviewer")
+
+    is_commenter = exists(
+        select(PRReviewComment.id).where(
+            PRReviewComment.pr_number == PullRequest.number,
+            PRReviewComment.commenter == username,
+        )
+    ).label("is_commenter")
+
+    return is_author, is_reviewer, is_commenter
+
+
+def _build_roles(is_author: bool, is_reviewer: bool, is_commenter: bool) -> list[str]:
+    """Build the roles list from boolean flags."""
+    roles = []
+    if is_author:
+        roles.append("author")
+    if is_reviewer:
+        roles.append("reviewer")
+    if is_commenter:
+        roles.append("commenter")
+    return roles
+
+
+def _last_human_commenter_subquery():
+    """
+    Returns a scalar subquery yielding the GitHub login of the most recent human
+    commenter on a given PR, or NULL if there are none.
+
+    Unions pr_review_comments (issue comments) and pr_reviews (formal reviews).
+    Bots are excluded by filtering on commenter_type / reviewer_type = 'User'.
+    The subquery is correlated on PullRequest.number.
+    """
+    comments_q = (
+        select(
+            PRReviewComment.pr_number.label("pr_number"),
+            PRReviewComment.commenter.label("commenter"),
+            PRReviewComment.created_at.label("ts"),
+        )
+        .where(PRReviewComment.commenter_type == "User")
+    )
+    reviews_q = (
+        select(
+            PRReview.pr_number.label("pr_number"),
+            PRReview.reviewer.label("commenter"),
+            PRReview.submitted_at.label("ts"),
+        )
+        .where(PRReview.reviewer_type == "User")
+    )
+    combined = union_all(comments_q, reviews_q).subquery("all_human_comments")
+
+    return (
+        select(combined.c.commenter)
+        .where(combined.c.pr_number == PullRequest.number)
+        .order_by(combined.c.ts.desc())
+        .limit(1)
+        .correlate(PullRequest)
+        .scalar_subquery()
+        .label("last_commenter")
     )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/prs", response_model=list[PRResponse])
+@router.get("/prs", response_model=PRListResponse)
 def list_prs(
+    numbers: str | None = Query(
+        None,
+        description="Comma-separated PR numbers to fetch (e.g. for starred PRs). "
+                    "When provided, status/team/limit/offset are ignored.",
+    ),
     team: str | None = Query(None, description="Filter by team label (e.g. 'python', 'rust')"),
     status: Literal["needs_review", "blocked", "all"] = Query(
         "needs_review", description="Which PRs to return"
     ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    username: str | None = Query(None, description="GitHub login for role annotation and filtering"),
+    roles: str | None = Query(None, description="Comma-separated roles to filter by: author, reviewer, commenter"),
+    unreviewed: bool = Query(False, description="If true, only return PRs with no formal human review (APPROVED/CHANGES_REQUESTED/DISMISSED)"),
     db: Session = Depends(get_db),
 ):
     """List open PRs, optionally filtered by team and review status."""
     waiting_since_col = PRLabelHistory.applied_at.label("waiting_since")
 
+    # Parse comma-separated roles string into a list.
+    role_list = [r.strip() for r in roles.split(",") if r.strip()] if roles else []
+
+    # Build annotation columns when username is provided.
+    if username:
+        is_author_col, is_reviewer_col, is_commenter_col = _role_annotations(username)
+        annotation_cols = (is_author_col, is_reviewer_col, is_commenter_col)
+    else:
+        annotation_cols = None
+
+    def _extract_roles(row) -> list[str]:
+        if annotation_cols is None:
+            return []
+        return _build_roles(row.is_author, row.is_reviewer, row.is_commenter)
+
+    # Starred / explicit-numbers path: return exactly these open PR numbers.
+    if numbers is not None:
+        number_list = [
+            int(n.strip()) for n in numbers.split(",") if n.strip().isdigit()
+        ]
+        if not number_list:
+            return PRListResponse(results=[], total=0)
+        select_cols = [PullRequest, waiting_since_col, _last_human_commenter_subquery()]
+        if annotation_cols:
+            select_cols.extend(annotation_cols)
+        stmt = (
+            select(*select_cols)
+            .outerjoin(
+                PRLabelHistory,
+                and_(
+                    PRLabelHistory.pr_number == PullRequest.number,
+                    PRLabelHistory.label_name == "review-requested",
+                ),
+            )
+            .where(
+                PullRequest.state == "open",
+                PullRequest.number.in_(number_list),
+            )
+            .order_by(PRLabelHistory.applied_at.asc().nullslast())
+        )
+        rows = db.execute(stmt).all()
+        results = [_to_pr_response(row[0], row[1], db, _extract_roles(row), getattr(row, "last_commenter", None)) for row in rows]
+        # COUNT using the same filters for consistency.
+        total = db.scalar(
+            select(func.count()).select_from(PullRequest).where(
+                PullRequest.state == "open",
+                PullRequest.number.in_(number_list),
+            )
+        ) or 0
+        return PRListResponse(results=results, total=total)
+
+    # Build the base WHERE conditions (reused for both COUNT and data queries).
+    base_conditions = [PullRequest.state == "open"]
+
+    if status == "needs_review":
+        base_conditions.append(_needs_review_filter())
+    elif status == "blocked":
+        base_conditions.append(_blocked_filter())
+
+    if team:
+        base_conditions.append(_has_label(team))
+
+    # Role filter: only PRs where the user holds at least one requested role.
+    role_condition = None
+    if username and role_list:
+        role_conditions = []
+        if "author" in role_list:
+            role_conditions.append(PullRequest.author == username)
+        if "reviewer" in role_list:
+            role_conditions.append(
+                exists(select(PRReview.id).where(
+                    PRReview.pr_number == PullRequest.number,
+                    PRReview.reviewer == username,
+                ))
+            )
+        if "commenter" in role_list:
+            role_conditions.append(
+                exists(select(PRReviewComment.id).where(
+                    PRReviewComment.pr_number == PullRequest.number,
+                    PRReviewComment.commenter == username,
+                ))
+            )
+        if role_conditions:
+            role_condition = or_(*role_conditions)
+
+    if role_condition is not None:
+        base_conditions.append(role_condition)
+
+    if unreviewed:
+        base_conditions.append(_no_human_formal_review_filter())
+
+    # COUNT query — same filters, no limit/offset.
+    total = db.scalar(
+        select(func.count()).select_from(PullRequest).where(*base_conditions)
+    ) or 0
+
+    # Data query — add annotation columns and paginate.
+    select_cols = [PullRequest, waiting_since_col, _last_human_commenter_subquery()]
+    if annotation_cols:
+        select_cols.extend(annotation_cols)
+
     stmt = (
-        select(PullRequest, waiting_since_col)
+        select(*select_cols)
         .outerjoin(
             PRLabelHistory,
             and_(
@@ -123,21 +328,15 @@ def list_prs(
                 PRLabelHistory.label_name == "review-requested",
             ),
         )
-        .where(PullRequest.state == "open")
+        .where(*base_conditions)
+        .order_by(PRLabelHistory.applied_at.asc().nullslast())
+        .limit(limit)
+        .offset(offset)
     )
 
-    if status == "needs_review":
-        stmt = stmt.where(_needs_review_filter())
-    elif status == "blocked":
-        stmt = stmt.where(_blocked_filter())
-
-    if team:
-        stmt = stmt.where(_has_label(team))
-
-    stmt = stmt.order_by(PRLabelHistory.applied_at.asc().nullslast()).limit(limit).offset(offset)
-
     rows = db.execute(stmt).all()
-    return [_to_pr_response(pr, waiting_since, db) for pr, waiting_since in rows]
+    results = [_to_pr_response(row[0], row[1], db, _extract_roles(row), getattr(row, "last_commenter", None)) for row in rows]
+    return PRListResponse(results=results, total=total)
 
 
 @router.get("/teams", response_model=list[TeamResponse])

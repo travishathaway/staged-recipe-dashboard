@@ -3,6 +3,7 @@
   import { navigate } from 'svelte-routing'
   import { Offcanvas } from 'bootstrap'
   import { getTeams, getPRs } from '../lib/api.js'
+  import { preferences } from '../lib/store.js'
   import PRCard from '../lib/components/PRCard.svelte'
   import TreeMap from '../lib/components/TreeMap.svelte'
 
@@ -17,9 +18,14 @@
   const _init = new URLSearchParams(window.location.search)
   let selectedTeam = _init.get('team') || null
   let currentPage = Math.max(1, parseInt(_init.get('page') ?? '1', 10) || 1)
+  let showStarred = _init.get('starred') === 'true'
+  const _rolesParam = _init.get('roles')
+  let selectedRoles = new Set(_rolesParam ? _rolesParam.split(',').filter(Boolean) : [])
+  let showUnreviewed = _init.get('unreviewed') === 'true'
 
   let teamPRs = []
   let teamPRsLoading = false
+  let filteredTotal = 0
 
   const logoMap = {
     python:     ['/logos/python.svg'],
@@ -38,21 +44,57 @@
     return logoMap[name] ?? []
   }
 
-  async function fetchTeamPRs(team, page) {
+  $: starredCount = Object.keys($preferences.starred.prs).length
+
+  async function fetchTeamPRs(team, page, starred, username, roles, unreviewed) {
     teamPRsLoading = true
     try {
-      const params = { status: 'needs_review', limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }
-      if (team) params.team = team
-      teamPRs = await getPRs(params)
+      if (starred) {
+        const starredPRs = Object.values($preferences.starred.prs)
+        if (starredPRs.length === 0) {
+          teamPRs = []
+          return
+        }
+        let results = starredPRs
+        if (team) results = results.filter(pr => (pr.labels || []).includes(team))
+        teamPRs = results
+      } else {
+        const params = { status: 'needs_review', limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }
+        if (team) params.team = team
+        if (username) params.username = username
+        if (roles && roles.size > 0) params.roles = [...roles]
+        if (unreviewed) params.unreviewed = true
+        const data = await getPRs(params)
+        teamPRs = data.results
+        filteredTotal = data.total
+      }
     } finally {
       teamPRsLoading = false
     }
   }
 
-  function syncURL(team, page) {
+  // When in starred mode, sync the displayed list with store changes locally —
+  // no network round-trip, no loading spinner, no flicker.
+  let _prevStarredKeys = null
+  $: if (showStarred) {
+    const starredPRsDict = $preferences.starred.prs
+    const currentKeys = Object.keys(starredPRsDict).sort().join(',')
+    if (_prevStarredKeys !== null && currentKeys !== _prevStarredKeys) {
+      // Diff: rebuild from the cached PR objects in the store
+      let results = Object.values(starredPRsDict)
+      if (selectedTeam) results = results.filter(pr => (pr.labels || []).includes(selectedTeam))
+      teamPRs = results
+    }
+    _prevStarredKeys = currentKeys
+  }
+
+  function syncURL(team, page, starred, roles, unreviewed) {
     const params = new URLSearchParams()
     if (team) params.set('team', team)
     if (page > 1) params.set('page', String(page))
+    if (starred) params.set('starred', 'true')
+    if (roles && roles.size > 0) params.set('roles', [...roles].join(','))
+    if (unreviewed) params.set('unreviewed', 'true')
     const search = params.toString()
     navigate(search ? `/?${search}` : '/', { replace: true })
   }
@@ -71,13 +113,34 @@
     currentPage = page
   }
 
+  function toggleStarred() {
+    showStarred = !showStarred
+    currentPage = 1
+  }
+
+  function toggleRole(role) {
+    if (selectedRoles.has(role)) {
+      selectedRoles.delete(role)
+    } else {
+      selectedRoles.add(role)
+    }
+    selectedRoles = selectedRoles  // trigger Svelte reactivity
+    currentPage = 1
+  }
+
+  function toggleUnreviewed() {
+    showUnreviewed = !showUnreviewed
+    currentPage = 1
+  }
+
   $: totalCount = selectedTeam
     ? (teams.find(t => t.name === selectedTeam)?.needs_review_count ?? 0)
     : totalWaiting
-  $: totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  $: activeTotal = (selectedRoles.size > 0 || showUnreviewed) ? filteredTotal : totalCount
+  $: totalPages = Math.max(1, Math.ceil(activeTotal / PAGE_SIZE))
 
-  $: syncURL(selectedTeam, currentPage)
-  $: fetchTeamPRs(selectedTeam, currentPage)
+  $: syncURL(selectedTeam, currentPage, showStarred, selectedRoles, showUnreviewed)
+  $: fetchTeamPRs(selectedTeam, currentPage, showStarred, $preferences.profile.githubUsername, selectedRoles, showUnreviewed)
 
   onMount(async () => {
     try {
@@ -201,13 +264,61 @@
         <i class="bi bi-list"></i> Teams
       </button>
 
+      <!-- Filters bar -->
+      <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+        <button
+          class="btn btn-sm"
+          class:btn-warning={showStarred}
+          class:btn-outline-secondary={!showStarred}
+          on:click={toggleStarred}
+        >
+          <i class="bi" class:bi-star-fill={showStarred} class:bi-star={!showStarred}></i>
+          Starred
+          {#if starredCount > 0}
+            <span class="badge text-bg-light ms-1">{starredCount}</span>
+          {/if}
+        </button>
+
+        <button
+          class="btn btn-sm"
+          class:btn-info={showUnreviewed}
+          class:btn-outline-secondary={!showUnreviewed}
+          on:click={toggleUnreviewed}
+        >
+          <i class="bi bi-eye-slash"></i>
+          No reviews yet
+        </button>
+
+        {#if $preferences.profile.githubUsername}
+          <span class="text-secondary small">Your roles:</span>
+          {#each ['author', 'reviewer', 'commenter'] as role}
+            <div class="form-check form-check-inline mb-0">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                id="role-{role}"
+                checked={selectedRoles.has(role)}
+                on:change={() => toggleRole(role)}
+              />
+              <label class="form-check-label small" for="role-{role}">
+                {role.charAt(0).toUpperCase() + role.slice(1)}
+              </label>
+            </div>
+          {/each}
+        {/if}
+      </div>
+
       {#if teamPRsLoading}
         <div class="d-flex align-items-center gap-2 text-secondary py-4">
           <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
           <span>Loading…</span>
         </div>
       {:else if teamPRs.length === 0}
-        <p class="text-secondary">No PRs currently awaiting review.</p>
+        {#if showStarred}
+          <p class="text-secondary">No starred PRs are currently open.</p>
+        {:else}
+          <p class="text-secondary">No PRs currently awaiting review.</p>
+        {/if}
       {:else}
         <ul class="list-group list-group-flush mb-2">
           {#each teamPRs as pr}
@@ -215,7 +326,7 @@
           {/each}
         </ul>
 
-        {#if totalPages > 1}
+        {#if !showStarred && totalPages > 1}
           <nav aria-label="PR pagination" class="mt-4">
             <ul class="pagination justify-content-center">
               <li class="page-item" class:disabled={currentPage === 1}>
