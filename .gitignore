@@ -223,6 +223,7 @@ __marimo__/
 pgdata/
 config.toml
 
-frontend/node_modules
+frontend/node_modules/
+!frontend/src/lib/
 
 deploy/secrets.yml
