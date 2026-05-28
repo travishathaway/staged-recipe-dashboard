@@ -105,7 +105,9 @@ def _ensure_pg_initialized() -> None:
 
 
 @db_app.command("start")
-def db_start():
+def db_start(
+    port: Optional[int] = typer.Option(None, "-p", "--port", help="PostgreSQL port (overrides config)."),
+):
     """Start the bundled PostgreSQL server, initializing it first if needed."""
     _ensure_pg_initialized()
     if _pg_is_running():
@@ -113,18 +115,20 @@ def db_start():
     else:
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         log_file = RUNTIME_DIR / "postgres.log"
-        _pg_ctl("start", "-l", str(log_file), check=True)
+        extra = ["-o", f"-p {port}"] if port is not None else []
+        _pg_ctl("start", "-l", str(log_file), *extra, check=True)
         typer.echo("PostgreSQL started.")
 
-    _ensure_app_db()
+    _ensure_app_db(port=port)
 
 
-def _ensure_app_db() -> None:
+def _ensure_app_db(port: int | None = None) -> None:
     """Create the application database if it doesn't already exist."""
     cfg = _cfg()
+    port_args = ["-p", str(port)] if port is not None else []
     result = subprocess.run(
         [
-            "psql", "-h", cfg.database.socket_dir, "-d", "postgres", "-tAc",
+            "psql", "-h", cfg.database.socket_dir, *port_args, "-d", "postgres", "-tAc",
             f"SELECT 1 FROM pg_database WHERE datname='{cfg.database.name}'",
         ],
         capture_output=True,
@@ -133,13 +137,15 @@ def _ensure_app_db() -> None:
     if result.stdout.strip() != "1":
         typer.echo(f"Creating database: {cfg.database.name}")
         subprocess.run(
-            ["createdb", "-h", cfg.database.socket_dir, cfg.database.name],
+            ["createdb", "-h", cfg.database.socket_dir, *port_args, cfg.database.name],
             check=True,
         )
 
 
 @db_app.command("stop")
-def db_stop():
+def db_stop(
+    port: Optional[int] = typer.Option(None, "-p", "--port", help="PostgreSQL port (overrides config)."),
+):
     """Stop the bundled PostgreSQL server."""
     if not _pg_is_running():
         typer.echo("PostgreSQL is not running.")
@@ -149,10 +155,13 @@ def db_stop():
 
 
 @db_app.command("shell")
-def db_shell():
+def db_shell(
+    port: Optional[int] = typer.Option(None, "-p", "--port", help="PostgreSQL port (overrides config)."),
+):
     """Open a psql shell connected to the dashboard database."""
     cfg = _cfg()
-    os.execvp("psql", ["psql", "-d", cfg.database.name, "-h", cfg.database.socket_dir])
+    effective_port = port or cfg.database.port
+    os.execvp("psql", ["psql", "-d", cfg.database.name, "-h", cfg.database.socket_dir, "-p", str(effective_port)])
 
 
 # ── Top-level commands ────────────────────────────────────────────────────────
