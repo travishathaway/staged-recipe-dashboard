@@ -42,6 +42,8 @@ mypy = ">=1.10"
 rattler-build = ">=0.37"
 pixi-pack = ">=0.7"
 ansible = ">=9"
+nodejs = ">=26.2.0,<26.3"
+ansible-vault = ">=4.1.0,<5"
 
 # ── Release feature (production conda package, resolved from ./dist/channel) ──
 [feature.release.dependencies]
