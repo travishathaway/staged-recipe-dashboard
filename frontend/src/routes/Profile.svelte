@@ -21,6 +21,17 @@
     showClearConfirm = false
   }
 
+  // --- Notes section ---
+  let showClearOrphanedConfirm = false
+
+  $: orphanedNoteCount = Object.keys($preferences.notes.prs)
+    .filter(k => !(k in $preferences.starred.prs)).length
+
+  function confirmClearOrphaned() {
+    preferences.clearOrphanedNotes()
+    showClearOrphanedConfirm = false
+  }
+
   // --- Export / Import section ---
   let fileInput
   let importConfirmText = null   // non-null when awaiting user confirmation
@@ -138,6 +149,43 @@
           <span class="small">Are you sure? This will remove all starred PRs.</span>
           <button class="btn btn-sm btn-danger" on:click={confirmClear}>Confirm</button>
           <button class="btn btn-sm btn-outline-secondary" on:click={() => showClearConfirm = false}>Cancel</button>
+        </div>
+      {/if}
+    </section>
+
+    <hr />
+
+    <!-- Notes -->
+    <section class="mb-5 mt-4">
+      <h5 class="fw-semibold mb-3">Pull Request Notes</h5>
+      {#if Object.keys($preferences.notes.prs).length === 0}
+        <p class="text-secondary mb-2">You have no notes on pull requests.</p>
+      {:else}
+        {@const totalCount = Object.keys($preferences.notes.prs).length}
+        <p class="mb-2">
+          You have notes on <strong>{totalCount}</strong>
+          pull request{totalCount === 1 ? '' : 's'}.
+          {#if orphanedNoteCount > 0}
+            <span class="text-secondary small">
+              ({orphanedNoteCount} orphaned — PR{orphanedNoteCount === 1 ? '' : 's'} not in your starred list)
+            </span>
+          {/if}
+        </p>
+      {/if}
+
+      {#if !showClearOrphanedConfirm}
+        <button
+          class="btn btn-sm btn-outline-danger"
+          disabled={orphanedNoteCount === 0}
+          on:click={() => showClearOrphanedConfirm = true}
+        >
+          <i class="bi bi-pencil"></i> Clear orphaned notes
+        </button>
+      {:else}
+        <div class="alert alert-warning py-2 px-3 d-inline-flex align-items-center gap-3">
+          <span class="small">Remove notes for {orphanedNoteCount} PR{orphanedNoteCount === 1 ? '' : 's'} not in your starred list?</span>
+          <button class="btn btn-sm btn-danger" on:click={confirmClearOrphaned}>Confirm</button>
+          <button class="btn btn-sm btn-outline-secondary" on:click={() => showClearOrphanedConfirm = false}>Cancel</button>
         </div>
       {/if}
     </section>

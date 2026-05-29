@@ -1,27 +1,40 @@
 /** Persistent user preferences store backed by localStorage. */
 
-import { writable } from 'svelte/store'
+import { writable, derived } from 'svelte/store'
 
 const KEY = 'srdb-preferences'
 
 const DEFAULT_PREFS = {
-  version: 2,
+  version: 3,
   profile: { githubUsername: null },
   // starred.prs is a dict keyed by PR number (string) → full PR object.
   // The PR object is cached so starring/unstarring never needs a network round-trip.
-  starred: { prs: {} },
+  starred:  { prs: {} },
+  // ignored.prs is a dict keyed by PR number (string) → true.
+  ignored:  { prs: {} },
+  // notes.prs is a dict keyed by PR number (string) → note text string.
+  notes:    { prs: {} },
 }
 
 function migrate(raw) {
-  if (raw.version === 2) return raw
+  if (raw.version === 3) return raw
+  if (raw.version === 2) {
+    return {
+      ...raw,
+      version: 3,
+      ignored: { prs: {} },
+      notes:   { prs: {} },
+    }
+  }
   if (raw.version === 1) {
     // v1 stored prs as an array of numbers; promote to an empty-object dict
     // (we can't recover the full PR objects, so we just drop the old numbers).
-    return {
+    const v2 = {
       ...raw,
       version: 2,
       starred: { prs: {} },
     }
+    return migrate(v2)  // recurse to v2→v3
   }
   // Future versions: add upgrade functions here
   return structuredClone(DEFAULT_PREFS)
@@ -75,6 +88,41 @@ function createPreferencesStore() {
       persist(p => ({ ...p, starred: { prs: {} } }))
     },
 
+    ignorePR(number) {
+      persist(p => ({
+        ...p,
+        ignored: { prs: { ...p.ignored.prs, [String(number)]: true } },
+      }))
+    },
+
+    unignorePR(number) {
+      persist(p => {
+        const { [String(number)]: _removed, ...rest } = p.ignored.prs
+        return { ...p, ignored: { prs: rest } }
+      })
+    },
+
+    setNote(number, text) {
+      const key = String(number)
+      persist(p => {
+        if (!text || !text.trim()) {
+          const { [key]: _removed, ...rest } = p.notes.prs
+          return { ...p, notes: { prs: rest } }
+        }
+        return { ...p, notes: { prs: { ...p.notes.prs, [key]: text } } }
+      })
+    },
+
+    clearOrphanedNotes() {
+      persist(p => {
+        const starredKeys = new Set(Object.keys(p.starred.prs))
+        const filtered = Object.fromEntries(
+          Object.entries(p.notes.prs).filter(([k]) => starredKeys.has(k))
+        )
+        return { ...p, notes: { prs: filtered } }
+      })
+    },
+
     exportJSON() {
       const data = JSON.parse(localStorage.getItem(KEY) || JSON.stringify(DEFAULT_PREFS))
       const blob = new Blob(
@@ -105,3 +153,10 @@ function createPreferencesStore() {
 }
 
 export const preferences = createPreferencesStore()
+
+/**
+ * Derived store that emits only when githubUsername actually changes.
+ * Use this in reactive fetch statements to avoid spurious refetches when
+ * other preferences (notes, stars, ignore) are mutated.
+ */
+export const githubUsername = derived(preferences, $p => $p.profile.githubUsername)

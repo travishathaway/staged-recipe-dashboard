@@ -104,10 +104,7 @@ def _ensure_pg_initialized() -> None:
     typer.echo("PostgreSQL data directory initialized.")
 
 
-@db_app.command("start")
-def db_start(
-    port: Optional[int] = typer.Option(None, "-p", "--port", help="PostgreSQL port (overrides config)."),
-):
+def _pg_start(port: Optional[int] = None) -> None:
     """Start the bundled PostgreSQL server, initializing it first if needed."""
     _ensure_pg_initialized()
     if _pg_is_running():
@@ -120,6 +117,14 @@ def db_start(
         typer.echo("PostgreSQL started.")
 
     _ensure_app_db(port=port)
+
+
+@db_app.command("start")
+def db_start(
+    port: Optional[int] = typer.Option(None, "-p", "--port", help="PostgreSQL port (overrides config)."),
+):
+    """Start the bundled PostgreSQL server, initializing it first if needed."""
+    _pg_start(port=port)
 
 
 def _ensure_app_db(port: int | None = None) -> None:
@@ -186,7 +191,7 @@ def _run_migrations() -> None:
 @app.command()
 def init():
     """Initialize database: start postgres, create app DB, run migrations."""
-    db_start()
+    _pg_start()
     typer.echo("Running migrations...")
     _run_migrations()
     typer.echo("Initialization complete.")
@@ -372,7 +377,7 @@ def start():
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
     if not _pg_is_running():
-        db_start()
+        _pg_start()
 
     worker_proc = subprocess.Popen(
         [sys.executable, "-m", "staged_recipe_dashboard.cli", "worker"]

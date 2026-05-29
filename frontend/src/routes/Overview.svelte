@@ -3,14 +3,13 @@
   import { navigate } from 'svelte-routing'
   import { Offcanvas } from 'bootstrap'
   import { getTeams, getPRs } from '../lib/api.js'
-  import { preferences } from '../lib/store.js'
+  import { preferences, githubUsername } from '../lib/store.js'
   import PRCard from '../lib/components/PRCard.svelte'
   import TreeMap from '../lib/components/TreeMap.svelte'
 
   let teams = []
-  let loading = true
+  let teamsLoaded = false
   let error = null
-  let totalWaiting = 0
 
   const PAGE_SIZE = 20
 
@@ -25,7 +24,9 @@
 
   let teamPRs = []
   let teamPRsLoading = false
+  let teamPRsError = null
   let filteredTotal = 0
+  let lastUpdatedAt = null
 
   const logoMap = {
     python:     ['/logos/python.svg'],
@@ -44,10 +45,26 @@
     return logoMap[name] ?? []
   }
 
+  function timeAgo(isoString) {
+    if (!isoString) return null
+    const ms = Date.now() - new Date(isoString).getTime()
+    const minutes = Math.floor(ms / 60_000)
+    if (minutes < 1) return 'just now'
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+    const days = Math.floor(hours / 24)
+    return `${days} day${days === 1 ? '' : 's'} ago`
+  }
+
+  $: totalWaiting = teams.reduce((sum, t) => sum + t.needs_review_count, 0)
+  $: loading = !teamsLoaded
+
   $: starredCount = Object.keys($preferences.starred.prs).length
 
   async function fetchTeamPRs(team, page, starred, username, roles, unreviewed) {
     teamPRsLoading = true
+    teamPRsError = null
     try {
       if (starred) {
         const starredPRs = Object.values($preferences.starred.prs)
@@ -65,16 +82,39 @@
         if (roles && roles.size > 0) params.roles = [...roles]
         if (unreviewed) params.unreviewed = true
         const data = await getPRs(params)
-        teamPRs = data.results
-        filteredTotal = data.total
+        teamPRs = data.results ?? []
+        filteredTotal = data.total ?? 0
+        if (data.last_updated_at && !lastUpdatedAt) {
+          lastUpdatedAt = data.last_updated_at
+        }
       }
+    } catch (e) {
+      teamPRsError = e.message
+      teamPRs = []
     } finally {
       teamPRsLoading = false
     }
   }
 
-  // When in starred mode, sync the displayed list with store changes locally —
-  // no network round-trip, no loading spinner, no flicker.
+  async function fetchTeams(username, roles, unreviewed, starred) {
+    if (starred) {
+      teamsLoaded = true
+      return
+    }
+    try {
+      teams = await getTeams({
+        username,
+        roles: roles && roles.size > 0 ? [...roles] : [],
+        unreviewed,
+      })
+    } catch (e) {
+      // Non-fatal — sidebar counts degrade gracefully
+    } finally {
+      teamsLoaded = true
+    }
+  }
+
+  // When in starred mode, sync the displayed list with store changes locally —  // no network round-trip, no loading spinner, no flicker.
   let _prevStarredKeys = null
   $: if (showStarred) {
     const starredPRsDict = $preferences.starred.prs
@@ -140,17 +180,12 @@
   $: totalPages = Math.max(1, Math.ceil(activeTotal / PAGE_SIZE))
 
   $: syncURL(selectedTeam, currentPage, showStarred, selectedRoles, showUnreviewed)
-  $: fetchTeamPRs(selectedTeam, currentPage, showStarred, $preferences.profile.githubUsername, selectedRoles, showUnreviewed)
+  $: fetchTeamPRs(selectedTeam, currentPage, showStarred, $githubUsername, selectedRoles, showUnreviewed)
+  $: fetchTeams($githubUsername, selectedRoles, showUnreviewed, showStarred)
 
-  onMount(async () => {
-    try {
-      teams = await getTeams()
-      totalWaiting = teams.reduce((sum, t) => sum + t.needs_review_count, 0)
-    } catch (e) {
-      error = e.message
-    } finally {
-      loading = false
-    }
+  onMount(() => {
+    // Teams are loaded reactively via fetchTeams above.
+    // onMount is kept for any future imperative setup needs.
   })
 </script>
 
@@ -165,6 +200,9 @@
       <h3>Reviews requested: <br />
         <span style="font-size:4rem">{totalWaiting}</span>
       </h3>
+      {#if lastUpdatedAt}
+        <p class="text-secondary small mb-0">Last updated: {timeAgo(lastUpdatedAt)}</p>
+      {/if}
     </div>
     <div class="col-md-9">
       <TreeMap {teams} />
@@ -200,7 +238,7 @@
               {/each}
               {#if getLogos(team.name).length === 0}
                 <span style="font-size:0.7rem;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;background:var(--bs-secondary-bg);border-radius:50%">
-                  {team.name[0].toUpperCase()}
+                  {(team.name[0] ?? '?').toUpperCase()}
                 </span>
               {/if}
             </span>
@@ -241,7 +279,7 @@
               {/each}
               {#if getLogos(team.name).length === 0}
                 <span style="font-size:0.7rem;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;background:var(--bs-secondary-bg);border-radius:50%">
-                  {team.name[0].toUpperCase()}
+                  {(team.name[0] ?? '?').toUpperCase()}
                 </span>
               {/if}
             </span>
@@ -313,6 +351,8 @@
           <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
           <span>Loading…</span>
         </div>
+      {:else if teamPRsError}
+        <p class="text-danger py-4">Error loading PRs: {teamPRsError}</p>
       {:else if teamPRs.length === 0}
         {#if showStarred}
           <p class="text-secondary">No starred PRs are currently open.</p>

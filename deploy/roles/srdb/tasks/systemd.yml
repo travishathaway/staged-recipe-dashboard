@@ -43,14 +43,14 @@
     enabled: true
     state: started
 
-- name: Enable and start srdb-worker
+- name: Enable and restart srdb-worker
   ansible.builtin.systemd:
     name: srdb-worker
     enabled: true
-    state: started
+    state: restarted
 
-- name: Enable and start srdb-server
+- name: Enable and restart srdb-server
   ansible.builtin.systemd:
     name: srdb-server
     enabled: true
-    state: started
+    state: restarted

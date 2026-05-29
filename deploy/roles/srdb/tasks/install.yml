@@ -58,6 +58,19 @@
   failed_when: false
   changed_when: false
 
+- name: Wipe old environment before installing new one
+  ansible.builtin.file:
+    path: "{{ srdb_install_dir }}"
+    state: absent
+
+- name: Recreate install directory
+  ansible.builtin.file:
+    path: "{{ srdb_install_dir }}"
+    state: directory
+    owner: "{{ srdb_service_user }}"
+    group: "{{ srdb_service_group }}"
+    mode: "0755"
+
 - name: Upload installer script
   ansible.builtin.copy:
     src: "{{ srdb_pack_local }}"

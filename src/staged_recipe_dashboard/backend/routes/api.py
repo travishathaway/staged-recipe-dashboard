@@ -49,6 +49,7 @@ class TeamResponse(BaseModel):
 class PRListResponse(BaseModel):
     results: list[PRResponse]
     total: int
+    last_updated_at: datetime | None = None
 
 
 class StatsResponse(BaseModel):
@@ -267,7 +268,10 @@ def list_prs(
                 PullRequest.number.in_(number_list),
             )
         ) or 0
-        return PRListResponse(results=results, total=total)
+        last_updated = db.scalar(
+            select(func.max(PullRequest.updated_at)).where(PullRequest.state == "open")
+        )
+        return PRListResponse(results=results, total=total, last_updated_at=last_updated)
 
     # Build the base WHERE conditions (reused for both COUNT and data queries).
     base_conditions = [PullRequest.state == "open"]
@@ -336,12 +340,48 @@ def list_prs(
 
     rows = db.execute(stmt).all()
     results = [_to_pr_response(row[0], row[1], db, _extract_roles(row), getattr(row, "last_commenter", None)) for row in rows]
-    return PRListResponse(results=results, total=total)
+    last_updated = db.scalar(
+        select(func.max(PullRequest.updated_at)).where(PullRequest.state == "open")
+    )
+    return PRListResponse(results=results, total=total, last_updated_at=last_updated)
 
 
 @router.get("/teams", response_model=list[TeamResponse])
-def list_teams(db: Session = Depends(get_db)):
+def list_teams(
+    username: str | None = Query(None),
+    roles: str | None = Query(None),
+    unreviewed: bool = Query(False),
+    db: Session = Depends(get_db),
+):
     """List all review teams with their needs-review and blocked PR counts."""
+    # Parse roles and build extra filter conditions (same logic as list_prs).
+    role_list = [r.strip() for r in roles.split(",") if r.strip()] if roles else []
+
+    extra_conditions = []
+    if username and role_list:
+        role_conditions = []
+        if "author" in role_list:
+            role_conditions.append(PullRequest.author == username)
+        if "reviewer" in role_list:
+            role_conditions.append(
+                exists(select(PRReview.id).where(
+                    PRReview.pr_number == PullRequest.number,
+                    PRReview.reviewer == username,
+                ))
+            )
+        if "commenter" in role_list:
+            role_conditions.append(
+                exists(select(PRReviewComment.id).where(
+                    PRReviewComment.pr_number == PullRequest.number,
+                    PRReviewComment.commenter == username,
+                ))
+            )
+        if role_conditions:
+            extra_conditions.append(or_(*role_conditions))
+
+    if unreviewed:
+        extra_conditions.append(_no_human_formal_review_filter())
+
     # Discover team labels dynamically (any label on an open PR that isn't a status label).
     team_labels = db.execute(
         select(PRLabel.label_name)
@@ -360,6 +400,7 @@ def list_teams(db: Session = Depends(get_db)):
             select(func.count()).select_from(PullRequest).where(
                 _needs_review_filter(),
                 _has_label(team_name),
+                *extra_conditions,
             )
         ) or 0
 
@@ -367,6 +408,7 @@ def list_teams(db: Session = Depends(get_db)):
             select(func.count()).select_from(PullRequest).where(
                 _blocked_filter(),
                 _has_label(team_name),
+                *extra_conditions,
             )
         ) or 0
 
@@ -437,7 +479,6 @@ class ReviewerScore(BaseModel):
     formal_reviews: int
     approved: int
     changes_requested: int
-    dismissed: int
     review_comments: int
     last_active: datetime | None
 
@@ -474,21 +515,59 @@ def get_scoreboard(
         params["team"] = team
 
     sql = text(f"""
-        WITH review_stats AS (
+        WITH ranked_reviews AS (
             SELECT
-                r.reviewer                                                              AS login,
+                r.reviewer,
                 r.reviewer_type,
-                COUNT(*) FILTER (WHERE r.state IN ('APPROVED','CHANGES_REQUESTED','DISMISSED'))
-                                                                                        AS formal_reviews,
-                COUNT(*) FILTER (WHERE r.state = 'APPROVED')                           AS approved,
-                COUNT(*) FILTER (WHERE r.state = 'CHANGES_REQUESTED')                  AS changes_requested,
-                COUNT(*) FILTER (WHERE r.state = 'DISMISSED')                          AS dismissed,
-                COUNT(*) FILTER (WHERE r.state = 'COMMENTED')                          AS commented_reviews,
-                MAX(r.submitted_at)                                                     AS last_review_at
+                r.pr_number,
+                r.state,
+                r.submitted_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY r.pr_number, r.reviewer
+                    ORDER BY r.submitted_at DESC
+                ) AS rn
             FROM pr_reviews r
-            WHERE r.submitted_at >= :cutoff
+            JOIN pull_requests p ON p.number = r.pr_number
+            WHERE r.state IN ('APPROVED', 'CHANGES_REQUESTED')
+              AND r.submitted_at >= :cutoff
+              AND r.reviewer != p.author
               {team_subquery}
-            GROUP BY r.reviewer, r.reviewer_type
+        ),
+        latest_review_states AS (
+            SELECT reviewer, reviewer_type, pr_number, state, submitted_at
+            FROM ranked_reviews
+            WHERE rn = 1
+        ),
+        comment_reviews AS (
+            SELECT
+                r.reviewer,
+                r.reviewer_type,
+                r.pr_number,
+                r.state,
+                r.submitted_at
+            FROM pr_reviews r
+            JOIN pull_requests p ON p.number = r.pr_number
+            WHERE r.state = 'COMMENTED'
+              AND r.submitted_at >= :cutoff
+              AND r.reviewer != p.author
+              {team_subquery}
+        ),
+        effective_reviews AS (
+            SELECT reviewer, reviewer_type, pr_number, state, submitted_at FROM latest_review_states
+            UNION ALL
+            SELECT reviewer, reviewer_type, pr_number, state, submitted_at FROM comment_reviews
+        ),
+        review_stats AS (
+            SELECT
+                reviewer                                                                AS login,
+                reviewer_type,
+                COUNT(*) FILTER (WHERE state IN ('APPROVED', 'CHANGES_REQUESTED'))     AS formal_reviews,
+                COUNT(*) FILTER (WHERE state = 'APPROVED')                             AS approved,
+                COUNT(*) FILTER (WHERE state = 'CHANGES_REQUESTED')                    AS changes_requested,
+                COUNT(*) FILTER (WHERE state = 'COMMENTED')                            AS commented_reviews,
+                MAX(submitted_at)                                                       AS last_review_at
+            FROM effective_reviews
+            GROUP BY reviewer, reviewer_type
         ),
         comment_stats AS (
             SELECT
@@ -497,7 +576,9 @@ def get_scoreboard(
                 COUNT(*)                                                                AS comment_count,
                 MAX(c.created_at)                                                       AS last_comment_at
             FROM pr_review_comments c
+            JOIN pull_requests p ON p.number = c.pr_number
             WHERE c.created_at >= :cutoff
+              AND c.commenter != p.author
               {comment_team_subquery}
             GROUP BY c.commenter, c.commenter_type
         )
@@ -507,7 +588,6 @@ def get_scoreboard(
             COALESCE(r.formal_reviews, 0)                                               AS formal_reviews,
             COALESCE(r.approved, 0)                                                     AS approved,
             COALESCE(r.changes_requested, 0)                                            AS changes_requested,
-            COALESCE(r.dismissed, 0)                                                    AS dismissed,
             COALESCE(r.commented_reviews, 0) + COALESCE(c.comment_count, 0)            AS review_comments,
             GREATEST(r.last_review_at, c.last_comment_at)                              AS last_active
         FROM review_stats r
@@ -525,7 +605,6 @@ def get_scoreboard(
             formal_reviews=row["formal_reviews"],
             approved=row["approved"],
             changes_requested=row["changes_requested"],
-            dismissed=row["dismissed"],
             review_comments=row["review_comments"],
             last_active=row["last_active"],
         )

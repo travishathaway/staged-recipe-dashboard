@@ -21,9 +21,17 @@ export function getPRs({ team, status = 'needs_review', limit = 50, offset = 0, 
   return fetchJSON(`${BASE}/prs?${params}`)
 }
 
-/** @returns {Promise<Array<{name: string, needs_review_count: number, blocked_count: number}>>} */
-export function getTeams() {
-  return fetchJSON(`${BASE}/teams`)
+/**
+ * @param {{ username?: string|null, roles?: string[], unreviewed?: boolean }} opts
+ * @returns {Promise<Array<{name: string, needs_review_count: number, blocked_count: number}>>}
+ */
+export function getTeams({ username = null, roles = [], unreviewed = false } = {}) {
+  const params = new URLSearchParams()
+  if (username) params.set('username', username)
+  if (roles.length > 0) params.set('roles', roles.join(','))
+  if (unreviewed) params.set('unreviewed', 'true')
+  const qs = params.toString()
+  return fetchJSON(`${BASE}/teams${qs ? '?' + qs : ''}`)
 }
 
 /** @returns {Promise<{total_open: number, needs_review: number, blocked: number, by_team: Array}>} */

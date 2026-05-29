@@ -23,6 +23,8 @@ done
 if [[ "$SKIP_BUILD" == false ]]; then
     echo "=== Building deployment artifact ==="
     bash scripts/build.sh
+else
+    echo "WARNING: --skip-build set — deploying existing dist/srdb-install.sh without rebuilding." >&2
 fi
 
 if [[ ! -f dist/srdb-install.sh ]]; then
