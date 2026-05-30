@@ -109,44 +109,34 @@
         {#each podium as r, i}
           {@const meta = podiumMeta[i]}
           <div class="podium-card {meta.label}">
-            <div class="avatar-wrap">
-              <div class="avatar-frame">
-                <img
-                  class="avatar"
-                  src="https://github.com/{r.login}.png?size=100"
-                  alt="{r.login} avatar"
-                />
-                <div class="rank-badge">{meta.rankNum}</div>
-              </div>
-              <a
-                class="login-link"
-                href="https://github.com/{r.login}"
-                target="_blank"
-                rel="noreferrer"
-              >{r.login}</a>
+            <div class="avatar-frame">
+              <img
+                class="avatar"
+                src="https://github.com/{r.login}.png?size=100"
+                alt="{r.login} avatar"
+              />
+              <div class="rank-badge">{meta.rankNum}</div>
             </div>
-            <a
-              class="login-link login-link-desktop"
-              href="https://github.com/{r.login}"
-              target="_blank"
-              rel="noreferrer"
-            >{r.login}</a>
-            <div class="stats">
-              <div class="stat">
-                <span class="stat-value total">{r.formal_reviews}</span>
-                <span class="stat-label">Reviews</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value approved">{r.approved}</span>
-                <span class="stat-label">Approved</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value changes">{r.changes_requested}</span>
-                <span class="stat-label">Changes</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value comments">{r.review_comments}</span>
-                <span class="stat-label">Comments</span>
+            <a class="login-link hide-small" href="https://github.com/{r.login}" target="_blank" rel="noreferrer">{r.login}</a>
+            <div class="stats-wrapper">
+              <a class="login-link show-small" href="https://github.com/{r.login}" target="_blank" rel="noreferrer">{r.login}</a>
+              <div class="stats">
+                <div class="stat">
+                  <span class="stat-value total">{r.formal_reviews}</span>
+                  <span class="stat-label">Reviews</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value approved">{r.approved}</span>
+                  <span class="stat-label">Approved</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value changes">{r.changes_requested}</span>
+                  <span class="stat-label">Changes</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-value comments">{r.review_comments}</span>
+                  <span class="stat-label">Comments</span>
+                </div>
               </div>
             </div>
           </div>
@@ -203,6 +193,7 @@
     align-items: flex-end;
     justify-content: center;
     gap: 1rem;
+    flex-wrap: wrap;
   }
 
   .podium-card {
@@ -220,35 +211,98 @@
     transform: translateY(-3px);
   }
 
-  .gold   { background: #fffdf0; border-color: #FFD700; width: 240px; order: 2; }
-  .silver { background: #f8f8f8; border-color: #C0C0C0; width: 210px; order: 1; }
-  .bronze { background: #fdf6f0; border-color: #CD7F32; width: 210px; order: 3; }
+  .gold   { background: #fffdf0; border-color: #FFD700; width: 210px; height: 320px; order: 2; }
+  .silver { background: #f8f8f8; border-color: #C0C0C0; width: 210px; height: 280px; order: 1; }
+  .bronze { background: #fdf6f0; border-color: #CD7F32; width: 210px; height: 240px; order: 3; }
 
-  /* ── Avatar wrapper — positions the rank badge over the avatar ── */
-  .avatar-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-    flex-shrink: 0;
+  .stats-wrapper {
+    margin-top: auto;
   }
 
-  /* Inner frame provides the positioning context for the badge */
+  .avatar-frame {
+    grid-column: 1;
+    grid-row: 1;
+    margin-bottom: 0.3rem;
+  }
+
+  .hide-small { display: block; }
+  .show-small { display: none; }
+
+  /* Username: below avatar, same column */
+  .login-link {
+    grid-column: 1;
+    grid-row: 2;
+    font-size: 0.75rem;
+    margin-bottom: 0;
+    text-align: center;
+    max-width: 72px;
+    overflow-wrap: break-word;
+  }
+
+  @media (max-width: 600px) {
+    .gold   { order: 1; width: auto; height: 100%; }
+    .silver { order: 2; width: auto; height: 100%; }
+    .bronze { order: 3; width: auto; height: 100%; }
+
+    .hide-small { display: none; }
+    .show-small { display: block; }
+
+    .podium-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .stats-wrapper {
+      margin-bottom: auto;
+    }
+
+    /* Grid layout: [avatar-frame] [stats]
+                    [login-link  ] [stats] */
+    .podium-card {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      grid-template-rows: auto auto;
+      column-gap: 1rem;
+      width: 100%;
+      height: auto;
+      text-align: left;
+    }
+    .avatar-frame {
+      grid-column: 1;
+      grid-row: 1;
+      margin-bottom: 0.3rem;
+    }
+    .gold   .avatar,
+    .silver .avatar,
+    .bronze .avatar {
+      width: 64px;
+      height: 64px;
+    }
+
+    /* Username: below avatar, same column */
+    .login-link {
+      grid-column: inherit;
+      grid-row: inherit;
+      font-size: 0.75rem;
+      margin-bottom: 0;
+      text-align: center;
+      overflow-wrap: break-word;
+    }
+
+    /* Stats: right column, spans both rows, vertically centred */
+    .stats {
+      grid-column: 2;
+      grid-row: 1 / 3;
+      align-self: center;
+      justify-content: flex-start;
+    }
+  }
+
+  /* Avatar frame: provides positioning context for the rank badge */
   .avatar-frame {
     position: relative;
     display: inline-block;
-  }
-
-  /* On desktop hide the login-link that lives inside avatar-wrap;
-     the desktop duplicate outside is shown instead */
-  .avatar-wrap .login-link {
-    display: none;
-  }
-
-  /* Desktop duplicate link */
-  .login-link-desktop {
-    display: block;
+    margin-bottom: 0.6rem;
   }
 
   .avatar {
@@ -259,19 +313,20 @@
 
   .gold   .avatar { width: 80px; height: 80px; border-color: #FFD700; }
   .silver .avatar { width: 68px; height: 68px; border-color: #C0C0C0; }
-  .bronze .avatar { width: 68px; height: 68px; border-color: #CD7F32; }
+  .bronze .avatar { width: 56px; height: 56px; border-color: #CD7F32; }
 
   .rank-badge {
     position: absolute;
     bottom: 0;
-    right: -4px;
+    right: -6px;
     font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.04em;
+    text-transform: uppercase;
     padding: 2px 6px;
     border-radius: 999px;
-    line-height: 1.4;
     border: 2px solid #fff;
+    line-height: 1.4;
   }
 
   .gold   .rank-badge { background: #FFD700; color: #5a4200; }
@@ -285,6 +340,8 @@
     text-decoration: none;
     margin-bottom: 0.85rem;
     word-break: break-all;
+    max-width: 100%;
+    font-size: 1rem !important;
   }
   .login-link:hover { text-decoration: underline; }
 
@@ -293,6 +350,7 @@
     gap: 0.6rem;
     justify-content: center;
     flex-wrap: wrap;
+    margin-top: inherit;
   }
 
   .stat {
@@ -315,70 +373,6 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-top: 2px;
-  }
-
-  /* ── Mobile: stack gold/silver/bronze, avatar left + username below, stats right ── */
-  @media (max-width: 600px) {
-    .podium-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .gold, .silver, .bronze {
-      width: 100%;
-      order: unset;
-      flex-direction: row;
-      align-items: flex-start;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      text-align: left;
-      padding: 0.85rem 1rem;
-    }
-    .gold   { order: 1; }
-    .silver { order: 2; }
-    .bronze { order: 3; }
-
-    /* Left column: avatar (with badge) + username stacked */
-    .gold   .avatar-wrap,
-    .silver .avatar-wrap,
-    .bronze .avatar-wrap {
-      margin-bottom: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.35rem;
-    }
-
-    /* All avatars same size on mobile */
-    .gold   .avatar,
-    .silver .avatar,
-    .bronze .avatar {
-      width: 64px;
-      height: 64px;
-    }
-
-    /* Username sits below the avatar inside avatar-wrap on mobile */
-    .avatar-wrap .login-link {
-      display: block;
-      font-size: 0.78rem;
-      margin-bottom: 0;
-      text-align: center;
-      max-width: 72px;
-      overflow-wrap: break-word;
-    }
-
-    /* Hide the desktop duplicate link on mobile */
-    .login-link-desktop {
-      display: none;
-    }
-
-    /* Stats fill remaining width to the right */
-    .stats {
-      flex: 1;
-      justify-content: flex-start;
-      align-content: center;
-      align-self: center;
-    }
   }
 
   /* ── Table ───────────────────────────────────────────────────── */
