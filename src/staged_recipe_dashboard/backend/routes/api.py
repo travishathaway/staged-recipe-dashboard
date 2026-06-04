@@ -528,7 +528,7 @@ def get_scoreboard(
                 ) AS rn
             FROM pr_reviews r
             JOIN pull_requests p ON p.number = r.pr_number
-            WHERE r.state IN ('APPROVED', 'CHANGES_REQUESTED')
+            WHERE r.state IN ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED')
               AND r.submitted_at >= :cutoff
               AND r.reviewer != p.author
               {team_subquery}
@@ -538,60 +538,30 @@ def get_scoreboard(
             FROM ranked_reviews
             WHERE rn = 1
         ),
-        comment_reviews AS (
-            SELECT
-                r.reviewer,
-                r.reviewer_type,
-                r.pr_number,
-                r.state,
-                r.submitted_at
-            FROM pr_reviews r
-            JOIN pull_requests p ON p.number = r.pr_number
-            WHERE r.state = 'COMMENTED'
-              AND r.submitted_at >= :cutoff
-              AND r.reviewer != p.author
-              {team_subquery}
-        ),
         effective_reviews AS (
             SELECT reviewer, reviewer_type, pr_number, state, submitted_at FROM latest_review_states
-            UNION ALL
-            SELECT reviewer, reviewer_type, pr_number, state, submitted_at FROM comment_reviews
         ),
         review_stats AS (
             SELECT
                 reviewer                                                                AS login,
                 reviewer_type,
-                COUNT(*) FILTER (WHERE state IN ('APPROVED', 'CHANGES_REQUESTED'))     AS formal_reviews,
+                COUNT(*) FILTER (WHERE state IN ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED'))     AS formal_reviews,
                 COUNT(*) FILTER (WHERE state = 'APPROVED')                             AS approved,
                 COUNT(*) FILTER (WHERE state = 'CHANGES_REQUESTED')                    AS changes_requested,
                 COUNT(*) FILTER (WHERE state = 'COMMENTED')                            AS commented_reviews,
                 MAX(submitted_at)                                                       AS last_review_at
             FROM effective_reviews
             GROUP BY reviewer, reviewer_type
-        ),
-        comment_stats AS (
-            SELECT
-                c.commenter                                                             AS login,
-                c.commenter_type                                                        AS reviewer_type,
-                COUNT(*)                                                                AS comment_count,
-                MAX(c.created_at)                                                       AS last_comment_at
-            FROM pr_review_comments c
-            JOIN pull_requests p ON p.number = c.pr_number
-            WHERE c.created_at >= :cutoff
-              AND c.commenter != p.author
-              {comment_team_subquery}
-            GROUP BY c.commenter, c.commenter_type
         )
         SELECT
-            COALESCE(r.login, c.login)                                                  AS login,
-            COALESCE(r.reviewer_type, c.reviewer_type)                                  AS reviewer_type,
+            r.login                                                  AS login,
+            r.reviewer_type                                 AS reviewer_type,
             COALESCE(r.formal_reviews, 0)                                               AS formal_reviews,
             COALESCE(r.approved, 0)                                                     AS approved,
             COALESCE(r.changes_requested, 0)                                            AS changes_requested,
-            COALESCE(r.commented_reviews, 0) + COALESCE(c.comment_count, 0)            AS review_comments,
-            GREATEST(r.last_review_at, c.last_comment_at)                              AS last_active
+            COALESCE(r.commented_reviews, 0)            AS review_comments,
+            r.last_review_at                              AS last_active
         FROM review_stats r
-        FULL OUTER JOIN comment_stats c ON r.login = c.login
         ORDER BY formal_reviews DESC, review_comments DESC
     """)
 
