@@ -1,162 +1,156 @@
-/** Persistent user preferences store backed by localStorage. */
+/**
+ * API-backed user preferences store.
+ *
+ * Replaces the localStorage-based store. On module load, fetches identity
+ * (GET /api/me) and preferences (GET /api/prefs) from the server.
+ *
+ * Public API (backward-compatible where possible):
+ *   authUser   — readable: { authenticated, login, avatar_url }
+ *   preferences — store with { starred: Set<number>, ignored: Set<number>, notes: Map<number,string> }
+ *   githubUsername — derived: login string or null (for backward compat)
+ *   refreshPrefs() — re-fetch prefs from server (used after migration)
+ *
+ * Mutation methods on preferences:
+ *   starPR(number), unstarPR(number)
+ *   ignorePR(number), unignorePR(number)
+ *   setNote(number, text), deleteNote(number)
+ *   clearStarred(), clearOrphanedNotes()  ← no-ops or simple server calls
+ */
 
-import { writable, derived } from 'svelte/store'
+import { writable, derived, get } from 'svelte/store'
+import {
+  getMe,
+  getPrefs,
+  starPR as apiStarPR,
+  unstarPR as apiUnstarPR,
+  ignorePR as apiIgnorePR,
+  unignorePR as apiUnignorePR,
+  setNote as apiSetNote,
+  deleteNote as apiDeleteNote,
+} from './api.js'
 
-const KEY = 'srdb-preferences'
+// ── Auth user store ────────────────────────────────────────────────────────────
 
-const DEFAULT_PREFS = {
-  version: 3,
-  profile: { githubUsername: null },
-  // starred.prs is a dict keyed by PR number (string) → full PR object.
-  // The PR object is cached so starring/unstarring never needs a network round-trip.
-  starred:  { prs: {} },
-  // ignored.prs is a dict keyed by PR number (string) → true.
-  ignored:  { prs: {} },
-  // notes.prs is a dict keyed by PR number (string) → note text string.
-  notes:    { prs: {} },
-}
+const _authUser = writable({ authenticated: false, login: null, avatar_url: null })
+export const authUser = { subscribe: _authUser.subscribe }
 
-function migrate(raw) {
-  if (raw.version === 3) return raw
-  if (raw.version === 2) {
-    return {
-      ...raw,
-      version: 3,
-      ignored: { prs: {} },
-      notes:   { prs: {} },
-    }
-  }
-  if (raw.version === 1) {
-    // v1 stored prs as an array of numbers; promote to an empty-object dict
-    // (we can't recover the full PR objects, so we just drop the old numbers).
-    const v2 = {
-      ...raw,
-      version: 2,
-      starred: { prs: {} },
-    }
-    return migrate(v2)  // recurse to v2→v3
-  }
-  // Future versions: add upgrade functions here
-  return structuredClone(DEFAULT_PREFS)
-}
+// ── Preferences store ──────────────────────────────────────────────────────────
 
-function loadPrefs() {
+/**
+ * Internal shape:
+ * {
+ *   starred: number[],   // PR numbers
+ *   ignored: number[],   // PR numbers
+ *   notes: { [prNumber: string]: string },
+ * }
+ */
+const _defaultPrefs = { starred: [], ignored: [], notes: {} }
+const _prefs = writable({ ..._defaultPrefs })
+
+// ── Initialisation ─────────────────────────────────────────────────────────────
+
+let _initialised = false
+
+async function _init() {
+  if (_initialised) return
+  _initialised = true
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY))
-    if (!raw || typeof raw.version !== 'number') return structuredClone(DEFAULT_PREFS)
-    return migrate(raw)
+    const me = await getMe()
+    _authUser.set(me)
+    if (me.authenticated) {
+      const prefs = await getPrefs()
+      _prefs.set(prefs)
+    }
   } catch {
-    return structuredClone(DEFAULT_PREFS)
+    // Non-fatal — user just sees unauthenticated state
   }
 }
+
+// Run immediately on module load (Svelte store initialisation is synchronous,
+// but the fetch is async; components read reactively so updates propagate).
+_init()
+
+// ── Public refreshPrefs ────────────────────────────────────────────────────────
+
+export async function refreshPrefs() {
+  try {
+    const prefs = await getPrefs()
+    _prefs.set(prefs)
+  } catch {
+    // Swallow errors — prefs just stay stale
+  }
+}
+
+// ── Backward-compat githubUsername derived store ───────────────────────────────
+
+export const githubUsername = derived(_authUser, $u => $u.login ?? null)
+
+// ── Preferences store with mutation methods ────────────────────────────────────
 
 function createPreferencesStore() {
-  const { subscribe, update, set } = writable(loadPrefs())
-
-  function persist(fn) {
-    update(prefs => {
-      const next = fn(prefs)
-      localStorage.setItem(KEY, JSON.stringify(next))
-      return next
-    })
-  }
+  const { subscribe } = _prefs
 
   return {
     subscribe,
 
-    setUsername(username) {
-      persist(p => ({ ...p, profile: { ...p.profile, githubUsername: username || null } }))
+    async starPR(number) {
+      await apiStarPR(number)
+      _prefs.update(p => ({ ...p, starred: [...new Set([...p.starred, number])] }))
     },
 
-    /** Star a PR. `prObject` must be the full PR object so it can be cached locally. */
-    starPR(prObject) {
-      persist(p => {
-        const key = String(prObject.number)
-        if (p.starred.prs[key]) return p
-        return { ...p, starred: { prs: { ...p.starred.prs, [key]: prObject } } }
+    async unstarPR(number) {
+      await apiUnstarPR(number)
+      _prefs.update(p => ({ ...p, starred: p.starred.filter(n => n !== number) }))
+    },
+
+    async ignorePR(number) {
+      await apiIgnorePR(number)
+      _prefs.update(p => ({ ...p, ignored: [...new Set([...p.ignored, number])] }))
+    },
+
+    async unignorePR(number) {
+      await apiUnignorePR(number)
+      _prefs.update(p => ({ ...p, ignored: p.ignored.filter(n => n !== number) }))
+    },
+
+    async setNote(number, text) {
+      if (!text || !text.trim()) {
+        await apiDeleteNote(number)
+        _prefs.update(p => {
+          const notes = { ...p.notes }
+          delete notes[String(number)]
+          return { ...p, notes }
+        })
+      } else {
+        await apiSetNote(number, text)
+        _prefs.update(p => ({ ...p, notes: { ...p.notes, [String(number)]: text } }))
+      }
+    },
+
+    async deleteNote(number) {
+      await apiDeleteNote(number)
+      _prefs.update(p => {
+        const notes = { ...p.notes }
+        delete notes[String(number)]
+        return { ...p, notes }
       })
     },
 
-    unstarPR(number) {
-      persist(p => {
-        const { [String(number)]: _removed, ...rest } = p.starred.prs
-        return { ...p, starred: { prs: rest } }
-      })
+    async clearStarred() {
+      const current = get(_prefs)
+      await Promise.all(current.starred.map(n => apiUnstarPR(n)))
+      _prefs.update(p => ({ ...p, starred: [] }))
     },
 
-    clearStarred() {
-      persist(p => ({ ...p, starred: { prs: {} } }))
+    async clearIgnored() {
+      const current = get(_prefs)
+      await Promise.all(current.ignored.map(n => apiUnignorePR(n)))
+      _prefs.update(p => ({ ...p, ignored: [] }))
     },
 
-    ignorePR(number) {
-      persist(p => ({
-        ...p,
-        ignored: { prs: { ...p.ignored.prs, [String(number)]: true } },
-      }))
-    },
-
-    unignorePR(number) {
-      persist(p => {
-        const { [String(number)]: _removed, ...rest } = p.ignored.prs
-        return { ...p, ignored: { prs: rest } }
-      })
-    },
-
-    setNote(number, text) {
-      const key = String(number)
-      persist(p => {
-        if (!text || !text.trim()) {
-          const { [key]: _removed, ...rest } = p.notes.prs
-          return { ...p, notes: { prs: rest } }
-        }
-        return { ...p, notes: { prs: { ...p.notes.prs, [key]: text } } }
-      })
-    },
-
-    clearOrphanedNotes() {
-      persist(p => {
-        const starredKeys = new Set(Object.keys(p.starred.prs))
-        const filtered = Object.fromEntries(
-          Object.entries(p.notes.prs).filter(([k]) => starredKeys.has(k))
-        )
-        return { ...p, notes: { prs: filtered } }
-      })
-    },
-
-    exportJSON() {
-      const data = JSON.parse(localStorage.getItem(KEY) || JSON.stringify(DEFAULT_PREFS))
-      const blob = new Blob(
-        [JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2)],
-        { type: 'application/json' }
-      )
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'staged-recipe-dashboard-settings.json'
-      a.click()
-      URL.revokeObjectURL(url)
-    },
-
-    importJSON(jsonString) {
-      const parsed = JSON.parse(jsonString)
-      if (typeof parsed.version !== 'number') throw new Error('Invalid settings file: missing version')
-      const migrated = migrate(parsed)
-      localStorage.setItem(KEY, JSON.stringify(migrated))
-      set(migrated)
-    },
-
-    reset() {
-      localStorage.removeItem(KEY)
-      set(structuredClone(DEFAULT_PREFS))
-    },
+    // No-op: server-side there are no orphaned notes; notes are independent of stars.
+    clearOrphanedNotes() {},
   }
 }
 
 export const preferences = createPreferencesStore()
-
-/**
- * Derived store that emits only when githubUsername actually changes.
- * Use this in reactive fetch statements to avoid spurious refetches when
- * other preferences (notes, stars, ignore) are mutated.
- */
-export const githubUsername = derived(preferences, $p => $p.profile.githubUsername)

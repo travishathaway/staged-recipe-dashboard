@@ -1,124 +1,60 @@
 <script>
-  import { preferences } from '../lib/store.js'
-
-  // --- Username section ---
-  let draftUsername = $preferences.profile.githubUsername || ''
-  let saved = false
-  let saveTimer = null
-
-  function saveUsername() {
-    preferences.setUsername(draftUsername.trim())
-    saved = true
-    clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => { saved = false }, 2000)
-  }
+  import { preferences, authUser } from '../lib/store.js'
 
   // --- Starred PRs section ---
-  let showClearConfirm = false
+  let showClearStarredConfirm = false
 
-  function confirmClear() {
-    preferences.clearStarred()
-    showClearConfirm = false
+  async function confirmClearStarred() {
+    await preferences.clearStarred()
+    showClearStarredConfirm = false
+  }
+
+  // --- Ignored PRs section ---
+  let showClearIgnoredConfirm = false
+
+  async function confirmClearIgnored() {
+    await preferences.clearIgnored()
+    showClearIgnoredConfirm = false
   }
 
   // --- Notes section ---
-  let showClearOrphanedConfirm = false
-
-  $: orphanedNoteCount = Object.keys($preferences.notes.prs)
-    .filter(k => !(k in $preferences.starred.prs)).length
-
-  function confirmClearOrphaned() {
-    preferences.clearOrphanedNotes()
-    showClearOrphanedConfirm = false
-  }
-
-  // --- Export / Import section ---
-  let fileInput
-  let importConfirmText = null   // non-null when awaiting user confirmation
-  let importError = null
-  let importSuccess = false
-  let importSuccessTimer = null
-
-  function handleExport() {
-    preferences.exportJSON()
-  }
-
-  function triggerImport() {
-    importError = null
-    fileInput.click()
-  }
-
-  function handleFileChange(e) {
-    const file = e.target.files[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const text = ev.target.result
-      try {
-        // Validate it parses and has a version field before prompting
-        const parsed = JSON.parse(text)
-        if (typeof parsed.version !== 'number') throw new Error('Not a valid settings file.')
-
-        const hasData = $preferences.profile.githubUsername || Object.keys($preferences.starred.prs).length > 0
-        if (hasData) {
-          importConfirmText = text
-        } else {
-          doImport(text)
-        }
-      } catch (err) {
-        importError = err.message || 'Failed to read file.'
-      }
-    }
-    reader.readAsText(file)
-    // Reset input so the same file can be re-selected if needed
-    e.target.value = ''
-  }
-
-  function doImport(text) {
-    try {
-      preferences.importJSON(text)
-      importConfirmText = null
-      importError = null
-      importSuccess = true
-      clearTimeout(importSuccessTimer)
-      importSuccessTimer = setTimeout(() => { importSuccess = false }, 2000)
-      // Sync draftUsername to newly imported value
-      draftUsername = $preferences.profile.githubUsername || ''
-    } catch (err) {
-      importConfirmText = null
-      importError = err.message || 'Import failed.'
-    }
-  }
-
-  function cancelImport() {
-    importConfirmText = null
-  }
+  // With server-side storage, notes are independent of stars — no orphan concept.
+  $: starredCount = ($preferences.starred || []).length
+  $: ignoredCount = ($preferences.ignored || []).length
+  $: notesCount = Object.keys($preferences.notes || {}).length
 </script>
 
 <div class="row justify-content-center">
   <div class="col-12 col-md-7 col-lg-6">
     <h2 class="mb-4">Profile</h2>
 
-    <!-- GitHub Username -->
+    <!-- GitHub Account -->
     <section class="mb-5">
-      <h5 class="fw-semibold mb-3">GitHub Username</h5>
-      <div class="d-flex gap-2 align-items-center">
-        <input
-          type="text"
-          class="form-control"
-          placeholder="e.g. octocat"
-          bind:value={draftUsername}
-          on:keydown={(e) => e.key === 'Enter' && saveUsername()}
-          style="max-width: 260px"
-        />
-        <button class="btn btn-primary" on:click={saveUsername}>Save</button>
-        {#if saved}
-          <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Saved</span>
-        {/if}
-      </div>
-      <p class="text-secondary small mt-2 mb-0">
-        Used to show your GitHub avatar in the nav.
-      </p>
+      <h5 class="fw-semibold mb-3">GitHub Account</h5>
+      {#if $authUser.authenticated}
+        <div class="d-flex align-items-center gap-3">
+          <img
+            src={$authUser.avatar_url}
+            alt="@{$authUser.login}"
+            width="48"
+            height="48"
+            class="rounded-circle"
+            style="object-fit:cover"
+          />
+          <div>
+            <div class="fw-semibold">@{$authUser.login}</div>
+            <div class="text-secondary small">Signed in via GitHub</div>
+          </div>
+          <a href="/auth/logout" class="btn btn-outline-secondary btn-sm ms-auto">
+            <i class="bi bi-box-arrow-right"></i> Logout
+          </a>
+        </div>
+      {:else}
+        <p class="text-secondary mb-2">Not signed in.</p>
+        <a href="/auth/login" class="btn btn-dark btn-sm">
+          <i class="bi bi-github"></i> Login with GitHub
+        </a>
+      {/if}
     </section>
 
     <hr />
@@ -126,29 +62,59 @@
     <!-- Starred PRs -->
     <section class="mb-5 mt-4">
       <h5 class="fw-semibold mb-3">Starred Pull Requests</h5>
-      {#if Object.keys($preferences.starred.prs).length === 0}
+      {#if starredCount === 0}
         <p class="text-secondary mb-2">You have no starred pull requests.</p>
       {:else}
-        {@const count = Object.keys($preferences.starred.prs).length}
         <p class="mb-2">
-          You have <strong>{count}</strong>
-          starred pull request{count === 1 ? '' : 's'}.
+          You have <strong>{starredCount}</strong>
+          starred pull request{starredCount === 1 ? '' : 's'}.
         </p>
       {/if}
 
-      {#if !showClearConfirm}
+      {#if !showClearStarredConfirm}
         <button
           class="btn btn-sm btn-outline-danger"
-          disabled={Object.keys($preferences.starred.prs).length === 0}
-          on:click={() => showClearConfirm = true}
+          disabled={starredCount === 0}
+          on:click={() => showClearStarredConfirm = true}
         >
           <i class="bi bi-star"></i> Clear all starred
         </button>
       {:else}
         <div class="alert alert-warning py-2 px-3 d-inline-flex align-items-center gap-3">
           <span class="small">Are you sure? This will remove all starred PRs.</span>
-          <button class="btn btn-sm btn-danger" on:click={confirmClear}>Confirm</button>
-          <button class="btn btn-sm btn-outline-secondary" on:click={() => showClearConfirm = false}>Cancel</button>
+          <button class="btn btn-sm btn-danger" on:click={confirmClearStarred}>Confirm</button>
+          <button class="btn btn-sm btn-outline-secondary" on:click={() => showClearStarredConfirm = false}>Cancel</button>
+        </div>
+      {/if}
+    </section>
+
+    <hr />
+
+    <!-- Ignored PRs -->
+    <section class="mb-5 mt-4">
+      <h5 class="fw-semibold mb-3">Ignored Pull Requests</h5>
+      {#if ignoredCount === 0}
+        <p class="text-secondary mb-2">You have no ignored pull requests.</p>
+      {:else}
+        <p class="mb-2">
+          You have <strong>{ignoredCount}</strong>
+          ignored pull request{ignoredCount === 1 ? '' : 's'}.
+        </p>
+      {/if}
+
+      {#if !showClearIgnoredConfirm}
+        <button
+          class="btn btn-sm btn-outline-danger"
+          disabled={ignoredCount === 0}
+          on:click={() => showClearIgnoredConfirm = true}
+        >
+          <i class="bi bi-eye-slash"></i> Clear all ignored
+        </button>
+      {:else}
+        <div class="alert alert-warning py-2 px-3 d-inline-flex align-items-center gap-3">
+          <span class="small">Are you sure? This will un-ignore all hidden PRs.</span>
+          <button class="btn btn-sm btn-danger" on:click={confirmClearIgnored}>Confirm</button>
+          <button class="btn btn-sm btn-outline-secondary" on:click={() => showClearIgnoredConfirm = false}>Cancel</button>
         </div>
       {/if}
     </section>
@@ -156,84 +122,17 @@
     <hr />
 
     <!-- Notes -->
-    <section class="mb-5 mt-4">
+    <section class="mt-4">
       <h5 class="fw-semibold mb-3">Pull Request Notes</h5>
-      {#if Object.keys($preferences.notes.prs).length === 0}
+      {#if notesCount === 0}
         <p class="text-secondary mb-2">You have no notes on pull requests.</p>
       {:else}
-        {@const totalCount = Object.keys($preferences.notes.prs).length}
-        <p class="mb-2">
-          You have notes on <strong>{totalCount}</strong>
-          pull request{totalCount === 1 ? '' : 's'}.
-          {#if orphanedNoteCount > 0}
-            <span class="text-secondary small">
-              ({orphanedNoteCount} orphaned — PR{orphanedNoteCount === 1 ? '' : 's'} not in your starred list)
-            </span>
-          {/if}
+        <p class="mb-0">
+          You have notes on <strong>{notesCount}</strong>
+          pull request{notesCount === 1 ? '' : 's'}.
         </p>
+        <p class="text-secondary small mt-1">Notes can be edited directly on each PR card.</p>
       {/if}
-
-      {#if !showClearOrphanedConfirm}
-        <button
-          class="btn btn-sm btn-outline-danger"
-          disabled={orphanedNoteCount === 0}
-          on:click={() => showClearOrphanedConfirm = true}
-        >
-          <i class="bi bi-pencil"></i> Clear orphaned notes
-        </button>
-      {:else}
-        <div class="alert alert-warning py-2 px-3 d-inline-flex align-items-center gap-3">
-          <span class="small">Remove notes for {orphanedNoteCount} PR{orphanedNoteCount === 1 ? '' : 's'} not in your starred list?</span>
-          <button class="btn btn-sm btn-danger" on:click={confirmClearOrphaned}>Confirm</button>
-          <button class="btn btn-sm btn-outline-secondary" on:click={() => showClearOrphanedConfirm = false}>Cancel</button>
-        </div>
-      {/if}
-    </section>
-
-    <hr />
-
-    <!-- Export & Import -->
-    <section class="mt-4">
-      <h5 class="fw-semibold mb-3">Export &amp; Import</h5>
-      <div class="d-flex gap-2 flex-wrap align-items-center">
-        <button class="btn btn-outline-secondary" on:click={handleExport}>
-          <i class="bi bi-download"></i> Export settings
-        </button>
-        <button class="btn btn-outline-secondary" on:click={triggerImport}>
-          <i class="bi bi-upload"></i> Import settings
-        </button>
-        <input
-          bind:this={fileInput}
-          type="file"
-          accept=".json"
-          class="d-none"
-          on:change={handleFileChange}
-        />
-        {#if importSuccess}
-          <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Imported</span>
-        {/if}
-      </div>
-
-      {#if importConfirmText}
-        <div class="alert alert-warning mt-3 py-2 px-3">
-          <p class="mb-2 small fw-semibold">
-            Importing will delete all your current settings on this site. Continue?
-          </p>
-          <div class="d-flex gap-2">
-            <button class="btn btn-sm btn-danger" on:click={() => doImport(importConfirmText)}>Import</button>
-            <button class="btn btn-sm btn-outline-secondary" on:click={cancelImport}>Cancel</button>
-          </div>
-        </div>
-      {/if}
-
-      {#if importError}
-        <div class="alert alert-danger mt-3 py-2 px-3 small">{importError}</div>
-      {/if}
-
-      <p class="text-secondary small mt-3 mb-0">
-        Export saves your profile and starred PRs as a JSON file you can import on another device.
-        Import replaces all current settings.
-      </p>
     </section>
   </div>
 </div>

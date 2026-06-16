@@ -2,8 +2,8 @@
   import { onMount } from 'svelte'
   import { navigate } from 'svelte-routing'
   import { Offcanvas } from 'bootstrap'
-  import { getTeams, getPRs } from '../lib/api.js'
-  import { preferences, githubUsername } from '../lib/store.js'
+  import { getTeams, getPRs, getStarredPRs } from '../lib/api.js'
+  import { preferences, authUser, githubUsername } from '../lib/store.js'
   import PRCard from '../lib/components/PRCard.svelte'
   import TreeMap from '../lib/components/TreeMap.svelte'
 
@@ -60,25 +60,25 @@
   $: totalWaiting = teams.reduce((sum, t) => sum + t.needs_review_count, 0)
   $: loading = !teamsLoaded
 
-  $: starredCount = Object.keys($preferences.starred.prs).length
+  $: starredCount = ($preferences.starred || []).length
 
   async function fetchTeamPRs(team, page, starred, username, roles, unreviewed) {
     teamPRsLoading = true
     teamPRsError = null
     try {
       if (starred) {
-        const starredPRs = Object.values($preferences.starred.prs)
-        if (starredPRs.length === 0) {
+        const starredNumbers = $preferences.starred || []
+        if (starredNumbers.length === 0) {
           teamPRs = []
           return
         }
-        let results = starredPRs
+        let results = await getStarredPRs(starredNumbers)
+        results = results?.results ?? results ?? []
         if (team) results = results.filter(pr => (pr.labels || []).includes(team))
         teamPRs = results
       } else {
         const params = { status: 'needs_review', limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }
         if (team) params.team = team
-        if (username) params.username = username
         if (roles && roles.size > 0) params.roles = [...roles]
         if (unreviewed) params.unreviewed = true
         const data = await getPRs(params)
@@ -103,7 +103,6 @@
     }
     try {
       teams = await getTeams({
-        username,
         roles: roles && roles.size > 0 ? [...roles] : [],
         unreviewed,
       })
@@ -114,16 +113,13 @@
     }
   }
 
-  // When in starred mode, sync the displayed list with store changes locally —  // no network round-trip, no loading spinner, no flicker.
+  // When in starred mode, re-fetch from server when the starred list changes.
   let _prevStarredKeys = null
   $: if (showStarred) {
-    const starredPRsDict = $preferences.starred.prs
-    const currentKeys = Object.keys(starredPRsDict).sort().join(',')
+    const starredNumbers = $preferences.starred || []
+    const currentKeys = [...starredNumbers].sort().join(',')
     if (_prevStarredKeys !== null && currentKeys !== _prevStarredKeys) {
-      // Diff: rebuild from the cached PR objects in the store
-      let results = Object.values(starredPRsDict)
-      if (selectedTeam) results = results.filter(pr => (pr.labels || []).includes(selectedTeam))
-      teamPRs = results
+      fetchTeamPRs(selectedTeam, currentPage, showStarred, $githubUsername, selectedRoles, showUnreviewed)
     }
     _prevStarredKeys = currentKeys
   }
@@ -327,7 +323,7 @@
           No reviews yet
         </button>
 
-        {#if $preferences.profile.githubUsername}
+        {#if $authUser.authenticated}
           <span class="text-secondary small">Your roles:</span>
           {#each ['author', 'reviewer', 'commenter'] as role}
             <div class="form-check form-check-inline mb-0">

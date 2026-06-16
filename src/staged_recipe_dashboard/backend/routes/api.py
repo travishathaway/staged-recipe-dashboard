@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, exists, func, not_, or_, select, text, union_all
 from sqlalchemy.orm import Session
 
-from staged_recipe_dashboard.backend.app import get_db
+from staged_recipe_dashboard.backend.app import get_current_user, get_db
 from staged_recipe_dashboard.backend.models import PRLabel, PRLabelHistory, PRReview, PRReviewComment, PullRequest
 
 router = APIRouter(prefix="/api")
@@ -211,12 +211,13 @@ def list_prs(
     ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    username: str | None = Query(None, description="GitHub login for role annotation and filtering"),
     roles: str | None = Query(None, description="Comma-separated roles to filter by: author, reviewer, commenter"),
     unreviewed: bool = Query(False, description="If true, only return PRs with no formal human review (APPROVED/CHANGES_REQUESTED/DISMISSED)"),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """List open PRs, optionally filtered by team and review status."""
+    username = current_user.github_login if current_user else None
     waiting_since_col = PRLabelHistory.applied_at.label("waiting_since")
 
     # Parse comma-separated roles string into a list.
@@ -348,12 +349,13 @@ def list_prs(
 
 @router.get("/teams", response_model=list[TeamResponse])
 def list_teams(
-    username: str | None = Query(None),
     roles: str | None = Query(None),
     unreviewed: bool = Query(False),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """List all review teams with their needs-review and blocked PR counts."""
+    username = current_user.github_login if current_user else None
     # Parse roles and build extra filter conditions (same logic as list_prs).
     role_list = [r.strip() for r in roles.split(",") if r.strip()] if roles else []
 
@@ -422,7 +424,7 @@ def list_teams(
 
 
 @router.get("/stats", response_model=StatsResponse)
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     """Aggregate statistics across all open PRs."""
     total_open = db.scalar(
         select(func.count()).select_from(PullRequest).where(PullRequest.state == "open")
@@ -437,7 +439,7 @@ def get_stats(db: Session = Depends(get_db)):
     ) or 0
 
     # Reuse list_teams for by_team breakdown.
-    by_team = list_teams(db=db)
+    by_team = list_teams(current_user=current_user, db=db)
 
     return StatsResponse(
         total_open=total_open,

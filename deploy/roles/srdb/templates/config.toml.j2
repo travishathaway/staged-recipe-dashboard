@@ -12,3 +12,8 @@ port = {{ srdb_server_port }}
 [logging]
 file  = "{{ srdb_data_dir }}/app.log"
 level = "INFO"
+
+[auth]
+github_client_id     = "{{ github_client_id }}"
+github_client_secret = "{{ github_client_secret }}"
+base_url             = "{{ srdb_base_url }}"

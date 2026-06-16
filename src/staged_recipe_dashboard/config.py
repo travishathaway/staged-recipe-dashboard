@@ -69,11 +69,26 @@ class LoggingConfig:
 
 
 @dataclass
+class AuthConfig:
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    # Scheme+host used to build the redirect_uri sent to GitHub.
+    # E.g. "https://srdb.example.com" for production, "http://localhost:5173" for dev.
+    base_url: str = "http://localhost:5173"
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AuthConfig":
+        valid = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**valid)
+
+
+@dataclass
 class AppConfig:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -98,4 +113,5 @@ def load_config(path: Path | None = None) -> AppConfig:
         worker=WorkerConfig.from_dict(raw.get("worker", {})),
         server=ServerConfig.from_dict(raw.get("server", {})),
         logging=LoggingConfig.from_dict(raw.get("logging", {})),
+        auth=AuthConfig.from_dict(raw.get("auth", {})),
     )

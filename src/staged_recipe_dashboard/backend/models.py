@@ -1,6 +1,6 @@
 """SQLAlchemy 2.x ORM models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -80,3 +80,48 @@ class PRReviewComment(Base):
     commenter: Mapped[str] = mapped_column(String, nullable=False)
     commenter_type: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    github_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    github_login: Mapped[str] = mapped_column(String, nullable=False)
+    avatar_url: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    sessions: Mapped[list["UserSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    preferences: Mapped[list["UserPreference"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class UserSession(Base):
+    __tablename__ = "sessions"
+
+    token: Mapped[str] = mapped_column(String, primary_key=True)  # 32-byte random hex
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="sessions")
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    pref_type: Mapped[str] = mapped_column(String, primary_key=True)  # 'starred' | 'ignored' | 'note'
+    pr_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    data: Mapped[dict | None] = mapped_column(JSONB)  # null for starred/ignored; {"text": "..."} for note
+
+    user: Mapped["User"] = relationship(back_populates="preferences")

@@ -9,9 +9,9 @@
   $: isBlocked = (pr.labels || []).includes('Awaiting author contribution')
   $: waitLabel = daysWaiting(pr.waiting_since)
   $: isLong = parseInt(waitLabel) > 14
-  $: isStarred = String(pr.number) in $preferences.starred.prs
-  $: isIgnored = String(pr.number) in $preferences.ignored.prs
-  $: noteText  = $preferences.notes.prs[String(pr.number)] ?? ''
+  $: isStarred = ($preferences.starred || []).includes(pr.number)
+  $: isIgnored = ($preferences.ignored || []).includes(pr.number)
+  $: noteText  = ($preferences.notes || {})[String(pr.number)] ?? ''
   $: hasNote   = noteText.length > 0
   let isEditing = false
   let draftNote = ''
@@ -31,7 +31,7 @@
     if (isStarred) {
       preferences.unstarPR(pr.number)
     } else {
-      preferences.starPR(pr)
+      preferences.starPR(pr.number)
     }
   }
 
