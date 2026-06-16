@@ -24,3 +24,7 @@ srdb_base_url: "https://{{ srdb_domain }}"
 # github_client_id and github_client_secret should be set in secrets.yml (ansible-vault).
 github_client_id: ""
 github_client_secret: ""
+
+# Sentry DSN for error reporting. Leave empty to disable.
+# Set the real value in secrets.yml (ansible-vault).
+sentry_dsn: ""

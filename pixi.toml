@@ -14,6 +14,7 @@ python = ">=3.11"
 psycopg2 = ">=2.9"
 httpx = ">=0.27"
 apscheduler = ">=3.10"
+sentry-sdk = ">=2.0"
 
 # ── Backend feature ────────────────────────────────────────────────────────────
 [feature.backend.dependencies]

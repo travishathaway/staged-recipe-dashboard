@@ -364,7 +364,35 @@
 
         {#if !showStarred && totalPages > 1}
           <nav aria-label="PR pagination" class="mt-4">
-            <ul class="pagination justify-content-center">
+            <!-- Mobile: first / prev / page-indicator / next / last -->
+            <ul class="pagination justify-content-center d-flex d-sm-none">
+              <li class="page-item" class:disabled={currentPage === 1}>
+                <button class="page-link" on:click={() => goToPage(1)} disabled={currentPage === 1}>
+                  &laquo;&laquo;
+                </button>
+              </li>
+              <li class="page-item" class:disabled={currentPage === 1}>
+                <button class="page-link" on:click={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>
+                  &laquo;
+                </button>
+              </li>
+              <li class="page-item active" aria-current="page">
+                <span class="page-link">{currentPage} / {totalPages}</span>
+              </li>
+              <li class="page-item" class:disabled={currentPage === totalPages}>
+                <button class="page-link" on:click={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>
+                  &raquo;
+                </button>
+              </li>
+              <li class="page-item" class:disabled={currentPage === totalPages}>
+                <button class="page-link" on:click={() => goToPage(totalPages)} disabled={currentPage === totalPages}>
+                  &raquo;&raquo;
+                </button>
+              </li>
+            </ul>
+
+            <!-- Desktop: full page list -->
+            <ul class="pagination justify-content-center d-none d-sm-flex">
               <li class="page-item" class:disabled={currentPage === 1}>
                 <button class="page-link" on:click={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>
                   &laquo;

@@ -88,7 +88,7 @@ def callback(
         user_resp = client.get(
             GITHUB_USER_URL,
             headers={
-                "Authorization": f"Bearer {access_token}",
+                "Authorization": f"token {access_token}",
                 "Accept": "application/json",
             },
         )

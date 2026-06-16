@@ -32,6 +32,18 @@ def _configure_logging(cfg: AppConfig) -> None:
         handler = logging.StreamHandler()
 
     logging.basicConfig(level=level, format=fmt, datefmt=datefmt, handlers=[handler])
+
+    if log_cfg.sentry_dsn:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+        sentry_sdk.init(
+            dsn=log_cfg.sentry_dsn,
+            integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+            # Capture all unhandled exceptions; no performance tracing overhead.
+            traces_sample_rate=0.0,
+        )
+        logging.getLogger(__name__).info("Sentry error reporting enabled")
 db_app = typer.Typer(help="Manage the bundled PostgreSQL server", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 

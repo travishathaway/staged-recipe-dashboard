@@ -61,6 +61,8 @@ class LoggingConfig:
     # Path to a log file. When unset, logs go to stderr.
     file: str | None = None
     level: str = "INFO"
+    # Sentry DSN for error reporting. When unset, Sentry is disabled.
+    sentry_dsn: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "LoggingConfig":
